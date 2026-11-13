@@ -34,9 +34,15 @@ def launch():
     parser.add_argument('--smoke-test', action='store_true')
     parser.add_argument('--report', type=Path, help='Write startup or offline verification JSON')
     parser.add_argument('--verify-mock', action='store_true', help='Run a 1,500-row offline release check in a fresh report workspace')
+    parser.add_argument('--verify-browser', action='store_true', help='Test real Chrome with a local page; no examination-site lookup')
     parser.add_argument('--mock', action='store_true', help='Offline 1,500-student test; no website requests')
     parser.add_argument('--mock-rows', type=int, default=1500, help='Number of fictional rows (1–100000)')
     args = parser.parse_args()
+    if args.verify_browser:
+        if args.report is None:
+            parser.error('--verify-browser requires --report')
+        from .browser_check import run
+        return run(args.report)
     if args.verify_mock:
         if args.report is None:
             parser.error('--verify-mock requires --report')
@@ -47,7 +53,7 @@ def launch():
         args.report.write_text(generated.read_text(encoding='utf-8'), encoding='utf-8')
         return 0
     if args.report and not args.smoke_test:
-        parser.error('--report requires --smoke-test or --verify-mock')
+        parser.error('--report requires --smoke-test, --verify-mock or --verify-browser')
     if not 1 <= args.mock_rows <= 100000:
         parser.error('--mock-rows must be between 1 and 100000')
     if args.mock_rows != 1500 and not args.mock:

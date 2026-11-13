@@ -14,6 +14,7 @@ from tests.test_parsing import CARD
 from qt_app.backend import Bridge
 from qt_app.storage import qt_data_root, configure_storage
 from al_results.models import WorkerEvent
+from selenium.common.exceptions import InvalidSessionIdException
 
 
 class Browser:
@@ -44,6 +45,20 @@ class Browser:
 
 
 class WorkflowTests(unittest.TestCase):
+    def test_browser_closed_message_is_actionable_and_saved_results_can_resume(self):
+        Browser.stop_after = 1
+        self.start()
+        Browser.stop_after = None
+        self.start()
+        with patch.object(Browser, 'fetch', side_effect=InvalidSessionIdException('session deleted', stacktrace=['Native stack detail'])):
+            self.bridge.decide('resume'); self.pump()
+        self.assertIn('Chrome was closed', self.bridge.status)
+        self.assertNotIn('Native stack detail', self.bridge.logText)
+        self.assertEqual(self.bridge.processed, 1)
+        self.assertTrue(self.bridge.canExport)
+        self.start(); self.bridge.decide('resume'); self.pump()
+        self.assertEqual(self.bridge.completed, 2)
+
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])

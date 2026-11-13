@@ -277,6 +277,8 @@ class Bridge(QObject):
             self._status = {'finished': 'Collection finished. Export your results.',
                             'stopped': 'Stopped. Resume or export partial results.',
                             'fatal': 'Collection interrupted. Saved progress is kept.'}[event.kind]
+            if p.get('reason') == 'browser_closed':
+                self._status = 'Chrome was closed. Saved progress is kept. Start collection to reopen Chrome and resume.'
             if p.get('error'):
                 self._status += ' ' + p['error']
             self.log(self._status)

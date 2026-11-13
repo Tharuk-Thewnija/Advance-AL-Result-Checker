@@ -6,8 +6,8 @@ export a new Excel file. The main interface now uses Python and Qt Quick (PySide
 
 ## Run
 
-- Installer: `dist/installer/ALResultsCollector-Setup-0.3.0.exe`.
-- Portable: extract `dist/ALResultsCollector-0.3.0-portable.zip` and open
+- Installer: `dist/installer/ALResultsCollector-Setup-0.3.1.exe`.
+- Portable: extract `dist/ALResultsCollector-0.3.1-portable.zip` and open
   `ALResultsCollector/ALResultsCollector.exe`. Keep `_internal` beside the EXE.
 - Source: double-click `run.cmd` after the setup below.
 
@@ -128,6 +128,7 @@ Smoke-check a bundle and write a JSON report:
 ```powershell
 .\dist\ALResultsCollector\ALResultsCollector.exe --smoke-test --report startup-report.json
 .\dist\ALResultsCollector\ALResultsCollector.exe --verify-mock --report mock-release-report.json
+.\dist\ALResultsCollector\ALResultsCollector.exe --verify-browser --report browser-release-report.json
 ```
 
 The offline release check uses a fresh workspace next to its report, tests the real

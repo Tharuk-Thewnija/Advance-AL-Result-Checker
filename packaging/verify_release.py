@@ -32,6 +32,10 @@ def verify(executable, output):
     subprocess.run([str(exe), '--smoke-test', '--report', str(startup)], env=env, cwd=working, check=True, timeout=45)
     data = json.loads(startup.read_text())
     assert data['loaded'] and data['toolkit'] == 'QtQuick' and data['subjects'] == 63
+    browser_report = output / 'browser.json'
+    subprocess.run([str(exe), '--verify-browser', '--report', str(browser_report)], env=env, cwd=working, check=True, timeout=120)
+    browser = json.loads(browser_report.read_text())
+    assert browser['checks'] == 'passed' and browser['closed_session_detected']
     mock_report = output / 'mock.json'
     subprocess.run([str(exe), '--verify-mock', '--report', str(mock_report)], env=env, cwd=working, check=True, timeout=150)
     mock = json.loads(mock_report.read_text())
@@ -39,7 +43,8 @@ def verify(executable, output):
     assert mock['checks'].startswith('passed:')
     assert Path(mock['last_export']).is_file()
     summary = dict(version=data['version'], startup='passed', graphics_api=data['graphics_api'],
-                   relocated_exe=str(exe), mock='passed', counts=mock['counts'])
+                   relocated_exe=str(exe), browser='passed', browser_version=browser['browser_version'],
+                   mock='passed', counts=mock['counts'])
     (output / 'verification.json').write_text(json.dumps(summary, indent=2) + '\n')
     print(json.dumps(summary, indent=2))
 

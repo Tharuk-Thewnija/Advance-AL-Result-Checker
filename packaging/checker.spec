@@ -3,7 +3,7 @@ from pathlib import Path
 from importlib import metadata
 import os
 import sys
-from PyInstaller.utils.hooks import collect_data_files
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 root = Path(SPECPATH).parent
 # External desktop tools may prepend incompatible DLLs (notably ICU) to PATH.
@@ -28,7 +28,9 @@ for name in ('PySide6-Essentials', 'shiboken6', 'selenium', 'pandas', 'numpy',
                 data.append((str(source), 'third_party_licenses/' + name + '/' + str(path.parent)))
 
 a = Analysis([str(root / 'checker.py')], pathex=[str(root)], binaries=[], datas=data,
-             hiddenimports=['openpyxl', 'xlrd'],
+             # Selenium 4.52 resolves driver/option classes with importlib. Static
+             # analysis cannot discover those lazy imports from webdriver.Chrome.
+             hiddenimports=['openpyxl', 'xlrd', *collect_submodules('selenium.webdriver')],
              excludes=['tkinter', '_tkinter', 'customtkinter', 'matplotlib', 'scipy', 'IPython',
                        'pytest', 'notebook', 'PyQt5', 'PyQt6', 'PySide2', 'qt_app.tests',
                        'tests', 'xlwt'],
