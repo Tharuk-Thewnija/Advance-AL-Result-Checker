@@ -23,4 +23,5 @@ class SubjectTests(unittest.TestCase):
         self.assertEqual(search_subjects('20')[0].name, 'Information & Communication Technology')
         self.assertIn('12', {s.id for s in subjects})
         self.assertIn('13', {s.id for s in subjects})
+        self.assertIn('88', {s.id for s in subjects})  # 2025 official statistics
         self.assertEqual(search_subjects('unlisted subject'), ())

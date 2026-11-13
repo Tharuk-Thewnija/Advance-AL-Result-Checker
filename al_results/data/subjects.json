@@ -401,6 +401,12 @@
       "name": "Japanese",
       "code": "87",
       "aliases": []
+    },
+    {
+      "id": "88",
+      "name": "Korean",
+      "code": "88",
+      "aliases": []
     }
   ]
 }
