@@ -1,1 +1,10 @@
 /Files
+__pycache__/
+*.py[cod]
+.superpowers/
+build/
+dist/
+*.sqlite3
+*.sqlite3-*
+*.log
+.venv/
