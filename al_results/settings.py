@@ -21,8 +21,10 @@ def _clean(value: dict) -> dict:
     ids = {subject.id for subject in load_subjects()}
     for key, allowed in [('subjects', ids), ('fields', set(FIELDS))]:
         choices = value.get(key)
-        if isinstance(choices, list) and all(isinstance(x, str) and x in allowed for x in choices):
-            defaults[key] = list(dict.fromkeys(choices))
+        if isinstance(choices, list) and all(isinstance(x, str) for x in choices):
+            supported = list(dict.fromkeys(x for x in choices if x in allowed))
+            if supported or not choices or key == 'fields':
+                defaults[key] = supported
     if isinstance(value.get('year'), str) and value['year'].isdigit():
         defaults['year'] = value['year']
     if type(value.get('timeout')) is int and value['timeout'] > 0:

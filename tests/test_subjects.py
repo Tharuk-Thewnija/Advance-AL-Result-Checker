@@ -20,8 +20,14 @@ class SubjectTests(unittest.TestCase):
         text = 'District Rank\n\nIsland Rank\n12\nZ-Score\n\nSubject Stream\nSCIENCE'
         self.assertEqual(parse_results(text, (), ('District Rank', 'Island Rank', 'Z-Score', 'Subject Stream')),
                          {'District Rank': None, 'Island Rank': '12', 'Z-Score': None, 'Subject Stream': 'SCIENCE'})
-        self.assertEqual(parse_results('Nameplate: VALUE\nSchool Name\nSAMPLE SCHOOL', (), ('Candidate Name', 'School')),
-                         {'Candidate Name': None, 'School': 'SAMPLE SCHOOL'})
+        self.assertEqual(parse_results('Nameplate: VALUE\nIndex Number\n1000001', (), ('Candidate Name', 'Index Number')),
+                         {'Candidate Name': None, 'Index Number': '1000001'})
+
+    def test_search_by_name_and_official_code(self):
+        self.assertEqual([s.id for s in search_subjects('01')], ['01'])
+        self.assertEqual([s.id for s in search_subjects('1')], ['01'])
+        self.assertEqual([s.id for s in search_subjects('25a')], ['25A'])
+        self.assertEqual([s.id for s in search_subjects('  information communication  ')], ['20'])
 
     def test_grouped_grades_ignore_metadata_matching_subject_names(self):
         text = 'Medium\nEnglish\nSubject Stream\nEngineering Technology\nPhysics\nChemistry\nGeneral English\nA\nB\nC'

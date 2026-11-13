@@ -8,7 +8,7 @@ and export the results to a new Excel file.
 
 The Windows bundle is `dist/ALResultsCollector/ALResultsCollector.exe`. Keep its
 `_internal` folder beside it. If using an installer, run
-`dist/installer/ALResultsCollector-Setup-0.2.0.exe`; it installs for the current user
+`dist/installer/ALResultsCollector-Setup-0.2.1.exe`; it installs for the current user
 and adds a Start menu shortcut and uninstaller. Customers do not need Python.
 
 Google Chrome and an internet connection are required. Selenium Manager may need
@@ -30,8 +30,9 @@ py -m venv .venv
    column named **NIC** and one row per student. Store NICs as Excel text to retain
    leading zeros. Existing numeric cells are normalized for lookup; exported input
    values are preserved. Invalid or blank NICs are marked skipped.
-2. Search and tick one or more subjects. ICT is selected initially. Optional fields
-   include name, school, district, medium, index number, ranks, Z-score and stream.
+2. Search by subject name or code and tick one or more subjects. ICT is selected
+   initially. Optional fields include name, index number, district/island ranks,
+   Z-score and stream. School, district and medium are not offered as output fields.
 3. Confirm the exam year. The department's website may offer only its latest year.
 4. Choose **Start collection**. For each student, complete CAPTCHA and submit on
    the results website in Chrome. You can skip the current student or stop.
