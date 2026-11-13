@@ -1,4 +1,4 @@
-"""Bounded worker-to-Tk handoff; progress/current are replaceable snapshots."""
+"""Bounded worker-to-UI handoff; progress/current are replaceable snapshots."""
 from collections import deque
 import threading
 from .models import WorkerEvent

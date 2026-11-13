@@ -8,6 +8,8 @@ dist/
 *.sqlite3-*
 *.log
 .venv/
+# Retired prototype's private environment/snapshots; recovery source is in Git.
+prototypes/
 *.xlsx
 *.xls
 !Template.xlsx

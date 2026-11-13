@@ -1,5 +1,5 @@
 """Launch the A/L results collector."""
-from al_results.ui import launch
+from qt_app.main import launch
 
 if __name__ == "__main__":
-    launch()
+    raise SystemExit(launch())
