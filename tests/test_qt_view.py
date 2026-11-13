@@ -21,7 +21,7 @@ class ViewTests(unittest.TestCase):
             engine.warnings.connect(lambda errors: warnings.extend(str(e) for e in errors))
             try:
                 app.processEvents()
-                self.assertEqual(window.title(), 'A/L Results Collector — Qt preview')
+                self.assertEqual(window.title(), 'A/L Results Collector')
                 from PySide6.QtCore import QObject
                 year = window.findChild(QObject, 'examYearInput')
                 self.assertIsNotNone(year)

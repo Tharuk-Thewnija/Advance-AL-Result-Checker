@@ -2,7 +2,8 @@ from __future__ import annotations
 import threading
 import time
 from selenium import webdriver
-from selenium.common.exceptions import TimeoutException, StaleElementReferenceException
+from selenium.common.exceptions import (TimeoutException, StaleElementReferenceException,
+                                        InvalidSessionIdException, NoSuchWindowException, WebDriverException)
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.select import Select
@@ -24,8 +25,18 @@ def check_controls(stop_event=None, skip_event=None):
         skip_event.clear()
         raise SkipCurrentRow('Skipped by user')
 
-def create_driver() -> webdriver.Chrome:
+def browser_closed_error(error) -> bool:
+    if isinstance(error, (InvalidSessionIdException, NoSuchWindowException)):
+        return True
+    message = (getattr(error, 'msg', '') or '').lower()
+    return isinstance(error, WebDriverException) and any(text in message for text in
+        ('not connected to devtools', 'chrome not reachable', 'disconnected', 'target window already closed'))
+
+
+def create_driver(*, headless=False) -> webdriver.Chrome:
     options = webdriver.ChromeOptions()
+    if headless:
+        options.add_argument('--headless=new')
     options.add_experimental_option("excludeSwitches", ["enable-logging"])
     options.page_load_strategy = 'eager'
     driver = webdriver.Chrome(options=options)
@@ -145,6 +156,7 @@ def collect(config, workbook, store, emit, stop_event, skip_event):
     from .excel_io import validate_rows
     browser = None
     terminal = 'finished'
+    reason = ''
     error = ''
     counts = {'total': len(workbook.frame), 'processed': 0, 'completed': 0, 'skipped': 0, 'failed': 0}
     status_keys = {'Completed': 'completed', 'Skipped': 'skipped', 'Error': 'failed'}
@@ -175,6 +187,7 @@ def collect(config, workbook, store, emit, stop_event, skip_event):
                 except SkipCurrentRow as exc:
                     result = RowResult(position, 'Skipped', {}, str(exc))
                 except TimeoutException:
+                    check_controls(stop_event)
                     result = RowResult(position, 'Error', {}, 'Timed out waiting for submitted results')
             # If this fails, abort rather than telling the GUI the row was saved.
             store.save(result)
@@ -184,6 +197,15 @@ def collect(config, workbook, store, emit, stop_event, skip_event):
             emit(WorkerEvent('log', {'text': f'Row {position + 1}: {result.status}' + (f' — {result.note}' if result.note else '')}))
     except StopRequested:
         terminal = 'stopped'
+    except WebDriverException as exc:
+        if browser_closed_error(exc):
+            terminal = 'stopped'
+            reason = 'browser_closed'
+        elif stop_event.is_set():
+            terminal = 'stopped'
+        else:
+            terminal = 'fatal'
+            error = exc.msg or 'Chrome could not complete the operation.'
     except Exception as exc:
         terminal = 'fatal'
         error = str(exc)
@@ -194,6 +216,6 @@ def collect(config, workbook, store, emit, stop_event, skip_event):
             except Exception:
                 pass
         store.close()
-    emit(WorkerEvent(terminal, {**counts, 'error': error}))
+    emit(WorkerEvent(terminal, {**counts, 'error': error, 'reason': reason}))
 
 

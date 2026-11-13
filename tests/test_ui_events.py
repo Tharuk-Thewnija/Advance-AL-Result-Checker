@@ -1,7 +1,6 @@
 import unittest
 from al_results.events import EventBuffer
 from al_results.models import WorkerEvent
-from al_results.ui import ActivityLog
 
 
 class UIEventTests(unittest.TestCase):
@@ -16,10 +15,3 @@ class UIEventTests(unittest.TestCase):
         self.assertEqual(events[0].payload['processed'], 1999)
         self.assertEqual(events[-1].kind, 'fatal')
         self.assertEqual(buffer.drain(), [])
-
-    def test_visible_activity_log_is_capped(self):
-        log = ActivityLog()
-        for i in range(1000):
-            log.append(str(i))
-        self.assertEqual(len(log.lines), 500)
-        self.assertEqual(log.lines[0], '500')

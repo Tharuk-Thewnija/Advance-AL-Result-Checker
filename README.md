@@ -1,22 +1,20 @@
 # A/L Results Collector
 
-A local Windows desktop tool for tuition teachers and institutes. Choose one
-student list, select the subjects and fields you need, complete CAPTCHA in Chrome,
-and export the results to a new Excel file.
+A local Windows desktop tool for tuition teachers and institutes. Upload one class
+workbook, choose the subjects and fields you need, complete CAPTCHA in Chrome, and
+export a new Excel file. The main interface now uses Python and Qt Quick (PySide6).
 
-## Run the application
+## Run
 
-The Windows bundle is `dist/ALResultsCollector/ALResultsCollector.exe`. Keep its
-`_internal` folder beside it. If using an installer, run
-`dist/installer/ALResultsCollector-Setup-0.2.1.exe`; it installs for the current user
-and adds a Start menu shortcut and uninstaller. Customers do not need Python.
+- Installer: `dist/installer/ALResultsCollector-Setup-0.3.1.exe`.
+- Portable: extract `dist/ALResultsCollector-0.3.1-portable.zip` and open
+  `ALResultsCollector/ALResultsCollector.exe`. Keep `_internal` beside the EXE.
+- Source: double-click `run.cmd` after the setup below.
 
-Google Chrome and an internet connection are required. Selenium Manager may need
-internet access on first use to obtain a compatible ChromeDriver; it caches the
-driver for later use. Chrome updates can require another driver download. The
-application does not bypass or solve CAPTCHA.
-
-To run from source, use a virtual environment on Windows (tested with Python 3.15):
+The installer runs for the current Windows user and adds a Start menu shortcut and
+uninstaller. Python is bundled. Chrome and an internet connection are needed for
+real collection. Selenium Manager obtains a compatible ChromeDriver when needed.
+The application does not solve or bypass CAPTCHA.
 
 ```powershell
 py -m venv .venv
@@ -24,122 +22,130 @@ py -m venv .venv
 .\.venv\Scripts\python.exe checker.py
 ```
 
-## Collect results
+Tested on 64-bit Windows with Python 3.15 and PySide6 Essentials 6.12.0.
+The retired Tkinter UI and comparison prototype are recoverable from Git tag
+`backup/pre-qt-main-2026-11-13` (commit `136e7ae`). They are not runtime dependencies.
 
-1. Choose an `.xlsx` or `.xls` workbook. The **first worksheet** must contain a
-   column named **NIC** and one row per student. Store NICs as Excel text to retain
-   leading zeros. Existing numeric cells are normalized for lookup; exported input
-   values are preserved. Invalid or blank NICs are marked skipped.
-2. Search by subject name or code and tick one or more subjects. ICT is selected
-   initially. Optional fields include name, index number, district/island ranks,
-   Z-score and stream. School, district and medium are not offered as output fields.
-3. Confirm the exam year. The department's website may offer only its latest year.
-4. Choose **Start collection**. For each student, complete CAPTCHA and submit on
-   the results website in Chrome. You can skip the current student or stop.
-5. Choose **Export results to Excel** and select an output folder. Open the saved
-   folder from the application.
+## Collect a class
 
-Advanced settings contain the output-folder preference and CAPTCHA timeout.
-Light, Dark and System appearance modes are available. Appearance, subjects,
-fields, year and timeout are remembered locally.
+1. Choose an `.xlsx` or `.xls` workbook. The first worksheet needs exactly one
+   `NIC` column. Store NICs as Excel text to preserve leading zeros. Invalid or
+   blank NICs are marked skipped; duplicate students remain separate rows.
+   **NIC is the only required column.** A one-column sheet is enough. Names, class
+   labels and other columns are optional and are retained in the export.
+2. Search and select subjects by name, alias or code. ICT is selected initially.
+   Optional fields are Candidate Name, Index Number, District Rank, Island Rank,
+   Z-Score and Subject Stream. Missing results stay blank with an explanatory note.
+3. Set the exam year. Advanced settings provides the CAPTCHA timeout and output
+   folder; the default is the input workbook's folder. Light/Dark/System themes
+   and selections are remembered locally.
+4. Start collection. Complete CAPTCHA and submit in Chrome for each student.
+   Stop & save keeps processed rows; Skip current skips the current student.
+5. Export to Excel, then Open folder. Each export gets a timestamp and unique suffix.
 
-### What is exported
+Import, browser collection and export run on worker threads. Closing during an
+operation waits for cleanup; browser startup/navigation can take time to stop.
+Changing subjects or input after a run configures the next collection. An export
+continues to use the captured workbook/selections for the completed or paused run;
+the output folder can be changed before exporting again.
 
-The original first-sheet rows and columns, selected subject grades, selected
-optional fields, Scrape Status and Scrape Notes. Other sheets, workbook formatting,
-formulas and macros are not preserved; this is a **value-only `.xlsx` export**.
-Missing results stay blank; check Scrape Notes. Completed means a result card was
-read, not that the student passed or every selected subject was present.
+Exports preserve the original first-sheet rows and columns, selected grades and
+fields, Scrape Status and Scrape Notes. They are **value-only `.xlsx` files**: other
+sheets, formatting, formulas and macros are not preserved. The input is never edited.
+Completed means a result card was read; it does not mean the student passed or that
+every selected subject was present. Conflicting output column names are made unique.
 
-Input files are never overwritten. Output names include a timestamp and unique
-suffix. If a generated column name already exists, a distinct Results-prefixed
-column is added. Duplicate students remain separate rows, matching the input.
+## Saved progress and the UI migration
 
-## Stop and resume
+Each processed row is committed to SQLite before the counter advances. Restart
+with the same unchanged workbook and selections to resume pending rows. Completed,
+skipped and error rows are retained. Start fresh archives the previous checkpoint;
+it does not delete it. Partial and full exports retain the checkpoint for recovery
+and repeat exports. Failed exports can be retried without collecting again.
 
-Each processed row is committed to a local SQLite checkpoint before the progress
-counter advances. After interruption, select the same unchanged workbook with
-the same subjects, fields, year and timeout, then choose Resume. Saved completed,
-skipped and error rows are retained; only pending rows are collected. Start Fresh
-discards those saved results and recollects all rows.
+The Qt app continues using its existing directory:
 
-Only one unfinished collection and one application window are supported. Selecting
-another workbook or different settings asks before discarding unfinished progress.
-Changing an input file prevents accidental reuse of its old results. Exporting
-partial results keeps the checkpoint so the rest can still be collected. A final
-successful export removes the checkpoint. If export fails, choose another folder
-and try again; progress remains saved.
+```text
+%LOCALAPPDATA%\ALResultsCollectorQt\ALResultsCollector\
+    current.sqlite3
+    archived-<timestamp>-<id>.sqlite3
+    preferences.json
+    collector.lock
+```
 
-Application data lives under `%LOCALAPPDATA%\ALResultsCollector`. It is separate
-from the installation folder and is retained on uninstall. Checkpoints contain
-input fingerprints, selections, row status and selected results, not a copy of the
-whole input workbook. Student NICs are entered only into the department's results
-website for lookups; there is no application server or analytics upload. Student
-files and results should not be committed to this repository.
+The retired UI's `%LOCALAPPDATA%\ALResultsCollector\` directory is kept unchanged.
+Its checkpoint is not automatically imported or overwritten by the Qt app. Before
+retiring the UI, consistent local database backups were saved under
+`%LOCALAPPDATA%\ALResultsCollectorBackups\pre-qt-main-<timestamp>\`. Student data is
+not in Git. The installer upgrades only installed application files; uninstall
+retains all checkpoint/preferences directories and exported workbooks.
 
-## Subject catalogue
+One normal collection window is supported. Student NICs are sent only to the
+examination website for requested lookups. There is no application server or
+analytics upload. Keep workbooks, checkpoints and archives private.
 
-The bundled catalogue has 63 result options: the department's subject-number list,
-cross-checked with its 2025 subject-performance tables, plus the Common General Test.
-Source URLs, catalogue version and verification date are recorded in
-[`al_results/data/subjects.json`](al_results/data/subjects.json).
+## Offline performance test
 
-- [Official subject numbers](https://doenets.lk/documents/news-headlines/Common_Documentor3languages_Subject_List.pdf)
-- [2025 performance report, Tables 14–15](https://www.doenets.lk/images/resources/STAT/2025ALPOCFinal%20%20EDIT_1775557559480.pdf)
+From source, double-click `qt_app/run_mock_test.cmd`, or run:
 
-Future exam years and website label variants may require catalogue updates.
-Explicit aliases distinguish Mathematics from Combined Mathematics, English from
-General English, and individual history/drama options. Report an unrecognised
-label with an anonymized example; do not post student NICs or real results.
+```powershell
+.\.venv\Scripts\python.exe checker.py --mock
+```
 
-## Development and verification
+The portable EXE also accepts `--mock`. It loads 1,500 fictional students and runs
+without a browser or website requests. The generated identifiers fail real NIC
+validation. Try resizing/minimizing, stopping, partial export, resuming and final
+export. The default simulation takes roughly two minutes, depending on the machine.
+
+Without manual skips, expect 1,455 completed rows, 30 deliberate skips and 15
+simulated timeout errors. 64 completed rows omit the first selected subject with a
+note. All 1,500 rows remain in the final export. Errors in this mode are intentional.
+
+Mock inputs, checkpoints, exports and performance reports are separate:
+`%LOCALAPPDATA%\ALResultsCollectorQtMock\ALResultsCollector\`.
+The footer shows sampled RAM, CPU and the largest UI timer interval. A JSON report
+is saved under `reports` on close. Startup/background throttling can increase the
+largest interval; it is not GPU frame time. This does not measure live scraping,
+Chrome memory, network or CAPTCHA overhead. Use `--mock-rows 5000` for a larger file.
+
+## Development and builds
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
-.\.venv\Scripts\python.exe -m compileall -q checker.py al_results
+.\.venv\Scripts\python.exe -m compileall -q checker.py al_results qt_app
+powershell -ExecutionPolicy Bypass -File packaging/build.ps1
 ```
 
-Browser tests require Chrome and use local HTML; no student IDs are sent to the
-department. UI tests create temporary synthetic workbooks and briefly construct
-Tk windows. Tests cover selected-only export, column collisions, disk/export
-failures, stop/resume, 1,000 synthetic rows and bounded UI buffers. The synthetic
-collector benchmark excludes real browser, network and CAPTCHA time; it is not
-a real-world collection-speed promise.
+The build script uses PyInstaller 6.22.3 and an installed Inno Setup compiler. Pass
+`-Iscc 'path\to\ISCC.exe'` if needed, or `-SkipInstaller` for the portable bundle.
+It bundles QML, the Qt runtime/plugins, subject catalogue, Selenium Manager and
+third-party notices. It excludes Tkinter, tests and local student files. See
+`packaging/THIRD_PARTY_NOTICES.md` and the installed licence files.
 
-Run `python examples/create_sample.py` from an empty directory for a sample list.
-Its NIC placeholders are intentionally invalid. Replace them before collecting.
-
-## Build on Windows
+Smoke-check a bundle and write a JSON report:
 
 ```powershell
-.\.venv\Scripts\python.exe -m PyInstaller --noconfirm packaging/checker.spec
-& 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe' packaging/installer.iss
+.\dist\ALResultsCollector\ALResultsCollector.exe --smoke-test --report startup-report.json
+.\dist\ALResultsCollector\ALResultsCollector.exe --verify-mock --report mock-release-report.json
+.\dist\ALResultsCollector\ALResultsCollector.exe --verify-browser --report browser-release-report.json
 ```
 
-The spec bundles CustomTkinter assets, the subject catalogue, Selenium Manager,
-and Excel readers. It excludes local student workbooks and application data.
-Inno Setup 6.7.4 was used for the installer recipe. Adapt the compiler path to your
-installation. Builds target 64-bit Windows; no administrator privileges are
-required by this application's installer.
+The offline release check uses a fresh workspace next to its report, tests the real
+view through stop/export/resume, and verifies exact 1,500-row exports. It sends no
+student data. Its shortened delays are not a prediction of live collection speed.
+Install and verify on a separate Windows computer without Python before public
+release. The binaries are unsigned; this development machine cannot establish
+clean-machine compatibility or sign them without a code-signing certificate.
 
-For a bundle startup check:
+## Subject catalogue and contributing
 
-```powershell
-.\dist\ALResultsCollector\ALResultsCollector.exe --smoke-test --report smoke-report.json
-```
+The catalogue has 63 result options. Version, verification date and official sources
+are recorded in `al_results/data/subjects.json`. Future years and website label
+changes may require updates. Report unrecognised labels with anonymized examples.
 
-Before public release, test installation, collection and uninstall on a clean
-Windows machine without Python. This development machine cannot establish that
-clean-machine compatibility. Website/form-only verification also does not replace
-a real student collection test with the owner completing CAPTCHA.
-
-## Contributing and licence
-
-Keep `checker.py` as the launcher. Parsing, subject data, Excel I/O, recovery,
-browser collection and the UI live in focused modules under `al_results/`.
-Use synthetic fixtures, run the suite, and describe behavior and validation in
-contributions. `Legacy/` is a historical copy and is not the application entry point.
-
-The project is intended to be open source. The maintainer still needs to select
-and add a licence before a public release; none has been chosen automatically.
+Keep browser/parsing/Excel/checkpoint code under `al_results/`, and Qt UI/controller
+code under `qt_app/`. Use synthetic fixtures and run the complete test suite.
+Do not commit student workbooks, results or application data. The project is intended
+to be open source; the maintainer still needs to choose a source licence before
+public release. No project licence has been chosen automatically.

@@ -7,7 +7,7 @@ ApplicationWindow {
     objectName: "collectorWindow"
     width: 1180; height: 880; minimumWidth: 1020; minimumHeight: 750
     visible: true
-    title: bridge.mockMode ? "A/L Results Collector — MOCK TEST" : "A/L Results Collector — Qt preview"
+    title: bridge.mockMode ? "A/L Results Collector — MOCK TEST" : "A/L Results Collector"
     onClosing: function(close) { close.accepted = bridge.requestClose() }
     Connections { target: bridge; function onReadyToClose() { win.close() } }
     color: t.bg
@@ -21,9 +21,12 @@ ApplicationWindow {
         anchors.fill: parent; anchors.margins: 28; spacing: 14
         RowLayout {
             Layout.fillWidth: true; spacing: 14
-            Rectangle {
-                width: 40; height: 40; radius: 12; color: t.accentSoft; border.color: t.accent
-                Text { anchors.centerIn: parent; text: "✦"; color: t.accentInk; font.pixelSize: 18 }
+            Image {
+                objectName: "appLogo"
+                Layout.preferredWidth: 40; Layout.preferredHeight: 40
+                source: Qt.resolvedUrl("../../packaging/app.ico")
+                sourceSize.width: 40; sourceSize.height: 40
+                fillMode: Image.PreserveAspectFit
             }
             ColumnLayout {
                 Layout.fillWidth: true; spacing: 2
@@ -265,10 +268,10 @@ ApplicationWindow {
             Layout.fillWidth: true
             Rectangle {
                 implicitWidth: footerLabel.implicitWidth + 24; implicitHeight: 28; radius: 14; color: t.panel; border.color: t.line
-                Hint { id: footerLabel; anchors.centerIn: parent; text: bridge.mockMode ? "●  MOCK TEST · fictional data only" : "●  Qt preview · separate saved progress"; color: bridge.mockMode ? t.warn : t.muted; font.pixelSize: 11 }
+                Hint { id: footerLabel; anchors.centerIn: parent; text: bridge.mockMode ? "●  MOCK TEST · fictional data only" : "●  Progress saved locally"; color: bridge.mockMode ? t.warn : t.muted; font.pixelSize: 11 }
             }
             Item { Layout.fillWidth: true }
-            Hint { text: bridge.diagnostics || "PySide6 + Qt Quick · doenets.lk"; Layout.fillWidth: true; horizontalAlignment: Text.AlignRight; elide: Text.ElideRight; wrapMode: Text.NoWrap; color: t.dim; font.pixelSize: 11 }
+            Hint { text: bridge.diagnostics || ("v" + Qt.application.version + " · doenets.lk"); Layout.fillWidth: true; horizontalAlignment: Text.AlignRight; elide: Text.ElideRight; wrapMode: Text.NoWrap; color: t.dim; font.pixelSize: 11 }
         }
     }
     Dialog {

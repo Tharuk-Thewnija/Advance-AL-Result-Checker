@@ -6,7 +6,7 @@ import time
 import tracemalloc
 from unittest.mock import patch
 import pandas as pd
-from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import TimeoutException, InvalidSessionIdException, NoSuchWindowException, WebDriverException
 from al_results.collector import collect, StopRequested, SkipCurrentRow, open_search_form
 from al_results.checkpoints import CheckpointStore
 from al_results.models import InputWorkbook, RunConfig, RowResult
@@ -34,6 +34,50 @@ class BrowserStub:
 
 
 class CollectorTests(unittest.TestCase):
+    def test_closed_browser_keeps_current_row_pending_and_stops_cleanly(self):
+        for error in (InvalidSessionIdException('session deleted'), NoSuchWindowException('target window already closed'),
+                      WebDriverException('disconnected: not connected to DevTools')):
+            with self.subTest(error=type(error).__name__):
+                self.events.clear()
+                store = CheckpointStore.open(self.book, self.config)
+                store.save(RowResult(0, 'Completed', {'subject:20': 'B'}))
+                BrowserStub.failure = error
+                self.run_worker(store)
+                self.assertEqual(self.events[-1].kind, 'stopped')
+                self.assertEqual(self.events[-1].payload['reason'], 'browser_closed')
+                self.assertEqual(self.events[-1].payload['processed'], 1)
+                reader = CheckpointStore.open(self.book, self.config)
+                self.assertEqual(reader.pending_positions(), [1, 2])
+                self.assertEqual(reader.results()[0].values['subject:20'], 'B')
+                reader.discard()
+                self.assertTrue(BrowserStub.closed)
+
+    def test_webdriver_error_during_stop_is_not_reported_as_fatal(self):
+        def fetch(*args):
+            self.stop.set()
+            raise WebDriverException('Browser command failed while stop was requested')
+        with patch.object(BrowserStub, 'fetch', side_effect=fetch):
+            self.run_worker()
+        self.assertEqual(self.events[-1].kind, 'stopped')
+        self.assertEqual(self.events[-1].payload['processed'], 0)
+
+    def test_unrelated_webdriver_error_stays_fatal_without_native_stack_dump(self):
+        BrowserStub.failure = WebDriverException('A genuine browser problem', stacktrace=['Native stack detail'])
+        self.run_worker()
+        self.assertEqual(self.events[-1].kind, 'fatal')
+        self.assertEqual(self.events[-1].payload['error'], 'A genuine browser problem')
+
+    def test_timeout_racing_with_stop_keeps_the_student_pending(self):
+        def fetch(*args):
+            self.stop.set()
+            raise TimeoutException('Wait ended during Stop')
+        with patch.object(BrowserStub, 'fetch', side_effect=fetch):
+            self.run_worker()
+        self.assertEqual(self.events[-1].kind, 'stopped')
+        self.assertEqual(self.events[-1].payload['processed'], 0)
+        reader = CheckpointStore.open(self.book, self.config)
+        self.assertEqual(reader.pending_positions(), [0, 1, 2]); reader.close()
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
