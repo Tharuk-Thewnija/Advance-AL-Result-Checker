@@ -7,7 +7,7 @@ import tempfile
 from datetime import datetime
 from uuid import uuid4
 import pandas as pd
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook as read_xlsx
 
 from .models import InputWorkbook, RunConfig, RowResult
 from .parsing import normalize_nic, is_valid_nic
@@ -19,11 +19,44 @@ def load_workbook(path: Path) -> InputWorkbook:
     if path.suffix.lower() not in ('.xlsx', '.xls'):
         raise ValueError('Choose an .xlsx or .xls file.')
     data = path.read_bytes()
-    with pd.ExcelFile(BytesIO(data), engine='xlrd' if path.suffix.lower() == '.xls' else 'openpyxl') as book:
-        sheet = book.sheet_names[0]
-        frame = pd.read_excel(book, sheet_name=sheet, dtype=object, keep_default_na=False)
-    if 'NIC' not in frame.columns:
-        raise ValueError("The first worksheet must contain a column named 'NIC'.")
+    if path.suffix.lower() == '.xlsx':
+        book = read_xlsx(BytesIO(data), read_only=True, data_only=True, keep_links=False)
+        try:
+            worksheet = book.worksheets[0]
+            sheet = worksheet.title
+            rows = list(worksheet.iter_rows(values_only=True))
+        finally:
+            book.close()
+    else:
+        import xlrd
+        book = xlrd.open_workbook(file_contents=data, on_demand=True)
+        try:
+            worksheet = book.sheet_by_index(0)
+            sheet = worksheet.name
+
+            def value(cell):
+                if cell.ctype == xlrd.XL_CELL_DATE:
+                    return xlrd.xldate_as_datetime(cell.value, book.datemode)
+                if cell.ctype == xlrd.XL_CELL_ERROR:
+                    return xlrd.error_text_from_code[cell.value]
+                if cell.ctype == xlrd.XL_CELL_BOOLEAN:
+                    return bool(cell.value)
+                return cell.value
+
+            rows = [tuple(value(cell) for cell in worksheet.row(i)) for i in range(worksheet.nrows)]
+        finally:
+            book.release_resources()
+    # Native readers retain Excel errors and duplicate/blank header labels.
+    # Ignore trailing rows/columns containing only formatting, not values.
+    while rows and all(value is None or value == '' for value in rows[-1]):
+        rows.pop()
+    if not rows:
+        raise ValueError('The first worksheet contains no students.')
+    width = max((i + 1 for row in rows for i, value in enumerate(row) if value is not None and value != ''), default=0)
+    headers = list(rows[0][:width])
+    if headers.count('NIC') != 1:
+        raise ValueError("The first worksheet must contain exactly one column named 'NIC'.")
+    frame = pd.DataFrame([row[:width] for row in rows[1:]], columns=pd.Index(headers, dtype=object), dtype=object)
     if frame.empty:
         raise ValueError('The first worksheet contains no students.')
     return InputWorkbook(path, hashlib.sha256(data).hexdigest(), sheet, frame)

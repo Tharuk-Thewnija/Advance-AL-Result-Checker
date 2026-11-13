@@ -39,30 +39,27 @@ def normalize_lines(text: str) -> list[str]:
 
 
 def find_labeled_value(lines: list[str], *labels: str) -> str | None:
-    for label in labels:
-        label_upper = label.upper()
-        for index, line in enumerate(lines):
-            line_upper = line.upper()
-            if line_upper.startswith(label_upper):
-                suffix = line[len(label):].strip(" :-\t")
-                if label_upper == "DISTRICT" and suffix.upper().startswith("RANK"):
-                    continue
-                if suffix:
-                    return suffix
-                if index + 1 < len(lines):
-                    return lines[index + 1]
+    boundaries = ('Examination', 'Year', 'Candidate Name', 'Name', 'Index Number',
+                  'NIC Number', 'NIC', 'School Name', 'School', 'District Rank',
+                  'Island Rank', 'District', 'Z-Score', 'Z Score', 'Subject Stream',
+                  'Stream', 'Medium', 'Subject Results', 'Subject', 'Results', 'Result')
 
-            match = re.search(
-                rf"^{re.escape(label)}(?:\s*[:\-]\s*|\s+)(.+)$",
-                line,
-                re.IGNORECASE,
-            )
-            if match:
-                value = normalize_spaces(match.group(1))
-                if label_upper == "DISTRICT" and value.upper().startswith("RANK"):
-                    continue
-                if value:
-                    return value
+    def is_label(value):
+        return any(re.match(rf"^{re.escape(label)}(?=$|[\s:\-])", value, re.I)
+                   for label in boundaries)
+
+    for label in labels:
+        for index, line in enumerate(lines):
+            match = re.match(rf"^{re.escape(label)}(?=$|[\s:\-])(.*)$", line, re.I)
+            if not match:
+                continue
+            suffix = match.group(1).strip(' :-\t')
+            if label.upper() == 'DISTRICT' and suffix.upper().startswith('RANK'):
+                continue
+            if suffix:
+                return suffix
+            if index + 1 < len(lines) and not is_label(lines[index + 1]):
+                return lines[index + 1]
     return None
 
 
@@ -233,28 +230,44 @@ def parse_results(text: str, subject_ids: tuple[str, ...] | str,
     for subject in subjects.values():
         for label in (subject.name, *subject.aliases):
             aliases[normalize_subject_key(label)] = subject.id
+    metadata_labels = {normalize_subject_key(field) for field in FIELDS}
+    metadata_labels.update({'NAME', 'SCHOOL NAME', 'STREAM', 'EXAMINATION', 'YEAR', 'NIC', 'NIC NUMBER'})
+    metadata_values = {i + 1 for i, line in enumerate(lines)
+                       if normalize_subject_key(line.strip(' :-')) in metadata_labels}
     matches = []
     found = {}
-    grade_pattern = re.compile(r'^(?:A|B|C|S|F|W|AB|ABS|ABSENT|WITHHELD|\d{1,3})$', re.I)
+
+    def valid_grade(subject_id, value):
+        if re.fullmatch(r'A|B|C|S|F|W|AB|ABS|ABSENT|WITHHELD', value, re.I):
+            return True
+        return subject_id == '12' and bool(re.fullmatch(r'\d{1,3}', value)) and int(value) <= 100
+
     for index, line in enumerate(lines):
-        # Accept a leading official code without allowing substring matches.
+        if index in metadata_values:
+            continue
         clean = re.sub(r'^\(?\d{1,2}[ABC]?\)?[.\s:-]+', '', line)
         subject_id = aliases.get(normalize_subject_key(clean))
         if subject_id:
             matches.append((index, subject_id))
-            if index + 1 < len(lines) and grade_pattern.fullmatch(lines[index + 1]):
-                found[subject_id] = lines[index + 1]
             continue
         parts = clean.rsplit(' ', 1)
-        if len(parts) == 2 and grade_pattern.fullmatch(parts[1]):
+        if len(parts) == 2:
             subject_id = aliases.get(normalize_subject_key(parts[0]))
-            if subject_id:
+            if subject_id and valid_grade(subject_id, parts[1]):
                 found[subject_id] = parts[1]
-    # Some cards render all subject labels followed by all grades.
-    if len(matches) > 1 and all(b[0] == a[0] + 1 for a, b in zip(matches, matches[1:])):
-        grades = lines[matches[-1][0] + 1:matches[-1][0] + 1 + len(matches)]
-        if len(grades) == len(matches) and all(grade_pattern.fullmatch(g) for g in grades):
-            found.update((subject_id, grade) for (_, subject_id), grade in zip(matches, grades))
+    # Handle each contiguous label group independently. Never attach the first
+    # grade of an incomplete group to its last subject.
+    cursor = 0
+    while cursor < len(matches):
+        end = cursor + 1
+        while end < len(matches) and matches[end][0] == matches[end - 1][0] + 1:
+            end += 1
+        group = matches[cursor:end]
+        grade_start = group[-1][0] + 1
+        grades = lines[grade_start:grade_start + len(group)]
+        if len(grades) == len(group) and all(valid_grade(sid, grade) for (_, sid), grade in zip(group, grades)):
+            found.update((sid, grade) for (_, sid), grade in zip(group, grades))
+        cursor = end
     result = {f'subject:{sid}': found.get(sid) for sid in subject_ids}
     labels = {'Candidate Name': ('Candidate Name', 'Name'), 'School': ('School Name', 'School'),
               'Z-Score': ('Z-Score', 'Z Score'), 'Subject Stream': ('Subject Stream', 'Stream')}

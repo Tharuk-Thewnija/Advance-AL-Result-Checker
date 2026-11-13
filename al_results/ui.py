@@ -15,6 +15,7 @@ from .excel_io import load_workbook, export_results, validate_rows
 from .models import RunConfig, WorkerEvent
 from .settings import load_preferences, save_preferences, validate_config
 from .subjects import FIELDS, load_subjects, search_subjects
+from .widgets import KeyboardButton, KeyboardCheckBox, KeyboardOptionMenu
 
 BG = ('#F2F5FA', '#131B29')
 PANEL = ('#FFFFFF', '#1C2739')
@@ -81,7 +82,7 @@ class ScraperApp(ctk.CTk):
                             font=ctk.CTkFont(family='Segoe UI', size=size, weight='bold' if bold else 'normal'), **kwargs)
 
     def button(self, parent, text, command, primary=False, **kwargs):
-        return ctk.CTkButton(parent, text=text, command=command, height=36,
+        return KeyboardButton(parent, text=text, command=command, height=36,
                             fg_color=BUTTON if primary else ('#E5ECF7', '#2A3A54'),
                             hover_color=HOVER if primary else ('#D6E1F2', '#3A4C69'),
                             text_color='white' if primary else INK, corner_radius=7, **kwargs)
@@ -92,7 +93,7 @@ class ScraperApp(ctk.CTk):
         header.grid_columnconfigure(0, weight=1)
         self.label(header, 'A/L Results Collector', 27, True).grid(row=0, column=0, sticky='w')
         self.label(header, 'Your class list. Only the results you need.', muted=True).grid(row=1, column=0, sticky='w', pady=(4, 0))
-        self.theme_menu = ctk.CTkOptionMenu(header, values=['System', 'Light', 'Dark'], variable=self.appearance_var,
+        self.theme_menu = KeyboardOptionMenu(header, values=['System', 'Light', 'Dark'], variable=self.appearance_var,
                                            command=self.change_appearance, width=112, fg_color=BUTTON, button_color=BUTTON)
         self.theme_menu.grid(row=0, column=1, rowspan=2, sticky='e')
         body = ctk.CTkFrame(self, fg_color='transparent')
@@ -132,7 +133,7 @@ class ScraperApp(ctk.CTk):
         fields.grid(row=8, column=0, sticky='ew', padx=14)
         fields.grid_columnconfigure((0, 1), weight=1)
         for i, (name, variable) in enumerate(self.field_vars.items()):
-            widget = ctk.CTkCheckBox(fields, text=name, variable=variable, text_color=INK, font=('Segoe UI', 12),
+            widget = KeyboardCheckBox(fields, text=name, variable=variable, text_color=INK, font=('Segoe UI', 12),
                                      checkbox_width=19, checkbox_height=19, fg_color=BUTTON, hover_color=HOVER)
             widget.grid(row=i // 2, column=i % 2, sticky='w', pady=5, padx=(0, 8))
             self.settings_widgets.append(widget)
@@ -194,7 +195,7 @@ class ScraperApp(ctk.CTk):
             widget.destroy()
         self.subject_widgets.clear()
         for row, subject in enumerate(search_subjects(self.search_var.get())):
-            widget = ctk.CTkCheckBox(self.subject_list, text=f'{subject.code}  ' + textwrap.fill(subject.name, width=43),
+            widget = KeyboardCheckBox(self.subject_list, text=f'{subject.code}  ' + textwrap.fill(subject.name, width=43),
                                      variable=self.subject_vars[subject.id], command=self.update_selection_count,
                                      text_color=INK, fg_color=BUTTON, hover_color=HOVER,
                                      font=('Segoe UI', 13), checkbox_width=20, checkbox_height=20,

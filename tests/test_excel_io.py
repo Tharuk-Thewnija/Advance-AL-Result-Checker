@@ -71,6 +71,29 @@ class ExcelTests(unittest.TestCase):
         self.assertEqual(with_book.active['B2'].data_type, 's')
         with_book.close()
 
+    def test_error_values_duplicate_and_blank_headers_roundtrip(self):
+        from openpyxl import Workbook, load_workbook as read_excel
+        excel = Workbook(); sheet = excel.active
+        sheet.append(['NIC', 'Name', 'Name', None])
+        sheet.append(['#N/A', 'first', 'second', 'unnamed value'])
+        excel.save(self.path); excel.close()
+        book = load_workbook(self.path)
+        self.assertEqual(list(book.frame.columns), ['NIC', 'Name', 'Name', None])
+        self.assertEqual(book.frame.iloc[0, 0], '#N/A')
+        self.assertIsNotNone(validate_rows(book)[0][2])
+        output = export_results(book, self.config, [])
+        excel = read_excel(output)
+        self.assertEqual([c.value for c in excel.active[1]][:4], ['NIC', 'Name', 'Name', None])
+        self.assertEqual([c.value for c in excel.active[2]][:4], ['#N/A', 'first', 'second', 'unnamed value'])
+        excel.close()
+
+    def test_duplicate_nic_headers_are_rejected(self):
+        from openpyxl import Workbook
+        excel = Workbook(); excel.active.append(['NIC', 'NIC'])
+        excel.active.append(['900000000V', '200000000001']); excel.save(self.path); excel.close()
+        with self.assertRaisesRegex(ValueError, 'exactly one'):
+            load_workbook(self.path)
+
     def test_missing_nic_and_first_sheet(self):
         with pd.ExcelWriter(self.path) as writer:
             pd.DataFrame({'Wrong': [1]}).to_excel(writer, sheet_name='First', index=False)

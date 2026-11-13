@@ -76,3 +76,27 @@ class UIFlowTests(unittest.TestCase):
         self.assertTrue(self.app.subject_vars['20'].get())
         self.app.clear_subjects()
         self.assertEqual(self.app.selection_label.cget('text'), '0 selected')
+
+    def test_keyboard_checkbox_activation_and_tab_focus(self):
+        self.app.deiconify(); self.app.update(); self.app.focus_force(); self.app.update()
+        physics = self.app.subject_widgets[0]
+        physics.focus_set(); self.app.update()
+        target = self.app.focus_get()
+        target.event_generate('<KeyPress-space>'); self.app.update()
+        self.assertTrue(self.app.subject_vars['01'].get())
+        target.event_generate('<Tab>'); self.app.update()
+        self.assertEqual(self.app.focus_get(), self.app.subject_widgets[1]._text_label)
+        field = next(w for w in self.app.settings_widgets if hasattr(w, 'cget') and
+                     isinstance(w, __import__('customtkinter').CTkCheckBox))
+        field.focus_set(); self.app.update()
+        self.app.focus_get().event_generate('<KeyPress-space>'); self.app.update()
+        self.assertTrue(self.app.field_vars['Candidate Name'].get())
+        last = self.app.subject_widgets[-1]
+        last.focus_set(); self.app.update()
+        self.assertGreater(self.app.subject_list._parent_canvas.yview()[0], 0)
+
+    def test_minimum_window_keeps_primary_actions_visible(self):
+        self.app.geometry('980x720'); self.app.deiconify(); self.app.update()
+        bottom = self.app.winfo_rooty() + self.app.winfo_height()
+        for button in (self.app.start_button, self.app.export_button, self.app.open_button):
+            self.assertLessEqual(button.winfo_rooty() + button.winfo_height(), bottom)

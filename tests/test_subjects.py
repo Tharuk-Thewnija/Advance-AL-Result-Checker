@@ -16,6 +16,22 @@ class SubjectTests(unittest.TestCase):
     def test_optional_fields(self):
         self.assertEqual(parse_results(CARD, (), ('District Rank',)), {'District Rank': None})
 
+    def test_blank_metadata_does_not_consume_next_label(self):
+        text = 'District Rank\n\nIsland Rank\n12\nZ-Score\n\nSubject Stream\nSCIENCE'
+        self.assertEqual(parse_results(text, (), ('District Rank', 'Island Rank', 'Z-Score', 'Subject Stream')),
+                         {'District Rank': None, 'Island Rank': '12', 'Z-Score': None, 'Subject Stream': 'SCIENCE'})
+        self.assertEqual(parse_results('Nameplate: VALUE\nSchool Name\nSAMPLE SCHOOL', (), ('Candidate Name', 'School')),
+                         {'Candidate Name': None, 'School': 'SAMPLE SCHOOL'})
+
+    def test_grouped_grades_ignore_metadata_matching_subject_names(self):
+        text = 'Medium\nEnglish\nSubject Stream\nEngineering Technology\nPhysics\nChemistry\nGeneral English\nA\nB\nC'
+        self.assertEqual(parse_results(text, ('01', '02', '13', '65', '73'), ()),
+                         {'subject:01': 'A', 'subject:02': 'B', 'subject:13': 'C', 'subject:65': None, 'subject:73': None})
+
+    def test_incomplete_group_does_not_assign_first_grade_to_last_subject(self):
+        self.assertEqual(parse_results('Physics\nChemistry\nA', ('01', '02'), ()),
+                         {'subject:01': None, 'subject:02': None})
+
     def test_catalogue_and_search(self):
         subjects = load_subjects()
         self.assertEqual(len({s.id for s in subjects}), len(subjects))
