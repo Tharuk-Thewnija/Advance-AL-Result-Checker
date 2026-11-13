@@ -4,7 +4,7 @@ import unittest
 from unittest.mock import patch
 import pandas as pd
 import xlwt
-from al_results.excel_io import load_workbook, validate_rows, export_results
+from al_results.excel_io import load_workbook, validate_rows, export_results, publish_export
 from al_results.models import RunConfig, RowResult
 
 
@@ -48,11 +48,28 @@ class ExcelTests(unittest.TestCase):
     def test_failed_export_keeps_input_and_cleans_temp(self):
         book = load_workbook(self.path)
         before = self.path.read_bytes()
-        with patch('al_results.excel_io.os.link', side_effect=PermissionError('Locked destination')):
+        with patch('al_results.excel_io.publish_export', side_effect=PermissionError('Locked destination')):
             with self.assertRaises(PermissionError):
                 export_results(book, self.config, [])
         self.assertEqual(self.path.read_bytes(), before)
         self.assertEqual(list(self.root.glob('.al-export-*')), [])
+
+    def test_publishing_never_overwrites_existing_file(self):
+        temporary = self.root / 'ready.xlsx'
+        target = self.root / 'existing.xlsx'
+        temporary.write_bytes(b'new'); target.write_bytes(b'original')
+        with self.assertRaises(FileExistsError):
+            publish_export(temporary, target)
+        self.assertEqual(target.read_bytes(), b'original')
+
+    def test_literal_formula_strings_are_not_executed(self):
+        book = load_workbook(self.path)
+        book.frame.at[0, 'Name'] = '=1+1'
+        path = export_results(book, self.config, [])
+        from openpyxl import load_workbook as open_excel
+        with_book = open_excel(path)
+        self.assertEqual(with_book.active['B2'].data_type, 's')
+        with_book.close()
 
     def test_missing_nic_and_first_sheet(self):
         with pd.ExcelWriter(self.path) as writer:

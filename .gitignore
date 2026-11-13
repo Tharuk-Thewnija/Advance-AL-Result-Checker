@@ -8,3 +8,9 @@ dist/
 *.sqlite3-*
 *.log
 .venv/
+*.xlsx
+*.xls
+!Template.xlsx
+!tests/fixtures/*.xlsx
+!tests/fixtures/*.xls
+smoke-report.json

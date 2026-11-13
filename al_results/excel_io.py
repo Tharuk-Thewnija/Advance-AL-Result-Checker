@@ -56,6 +56,15 @@ def output_columns(workbook: InputWorkbook, config: RunConfig) -> dict[str, str]
     return result
 
 
+def publish_export(temporary: Path, destination: Path) -> None:
+    if os.name == 'nt':
+        # Windows rename is atomic and refuses an existing destination. Unlike
+        # hard links, it also works on removable FAT/exFAT output drives.
+        os.rename(temporary, destination)
+    else:
+        os.link(temporary, destination)
+
+
 def export_results(workbook: InputWorkbook, config: RunConfig, results: list[RowResult]) -> Path:
     config.output_dir.mkdir(parents=True, exist_ok=True)
     columns = output_columns(workbook, config)
@@ -87,8 +96,7 @@ def export_results(workbook: InputWorkbook, config: RunConfig, results: list[Row
     destination = config.output_dir / f'results_{datetime.now():%Y%m%d_%H%M%S}_{uuid4().hex[:8]}.xlsx'
     try:
         excel.save(temporary)
-        # Publishing a completed file via hard link cannot overwrite an existing file.
-        os.link(temporary, destination)
+        publish_export(temporary, destination)
         return destination
     finally:
         excel.close()

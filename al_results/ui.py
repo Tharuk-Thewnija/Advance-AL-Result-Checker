@@ -1,908 +1,452 @@
-from __future__ import annotations
-
-import queue
-import re
-import threading
-import time
-from dataclasses import dataclass
+"""Single-window desktop workflow. All Tk operations stay on the main thread."""
+from collections import deque
 from datetime import datetime
+import os
 from pathlib import Path
+import threading
+from tkinter import filedialog, messagebox
+import customtkinter as ctk
 
-import pandas as pd
+from . import __version__
+from .checkpoints import CheckpointStore, CheckpointMismatch, checkpoint_path, app_data_dir
+from .collector import collect
+from .events import EventBuffer
+from .excel_io import load_workbook, export_results, validate_rows
+from .models import RunConfig, WorkerEvent
+from .settings import load_preferences, save_preferences, validate_config
+from .subjects import FIELDS, load_subjects, search_subjects
 
-try:
-    import customtkinter as ctk
-    from tkinter import filedialog, messagebox
-except ImportError as exc:
-    raise SystemExit(
-        "CustomTkinter is required. Install dependencies with: "
-        "pip install customtkinter selenium pandas openpyxl"
-    ) from exc
-
-from selenium import webdriver
-from selenium.common.exceptions import TimeoutException
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.support.select import Select
-from selenium.webdriver.support.ui import WebDriverWait
-
-
-RESULTS_PAGE_URL = "https://www.doenets.lk/examresults"
-DEFAULT_EXAM_NAME = "G.C.E.(A/L) EXAMINATION"
-DEFAULT_OUTPUT_MODE = "Full Student Data"
-DEFAULT_TIMEOUT_SECONDS = 180
-THEME_GREEN = "#1D6F5F"
-THEME_SURFACE = "#F5F7F7"
-THEME_CARD = "#FFFFFF"
-THEME_TEXT = "#18332E"
+BG = ('#F2F5FA', '#131B29')
+PANEL = ('#FFFFFF', '#1C2739')
+INK = ('#172B49', '#E7EEF8')
+MUTED = ('#52657D', '#A9B8CD')
+LINE = ('#D9E2EF', '#35445D')
+ACCENT = ('#2456C6', '#739EFF')
+BUTTON = ('#2456C6', '#3564CD')
+HOVER = ('#1946A9', '#4778E6')
 
 
-class SkipCurrentRow(Exception):
-    """Raised when the user chooses to skip the currently pending NIC."""
+class ActivityLog:
+    def __init__(self):
+        self.lines = deque(maxlen=500)
 
-
-class StopRequested(Exception):
-    """Raised when the user stops the worker."""
-
-
-@dataclass(slots=True)
-class ScrapeConfig:
-    input_path: Path
-    subject_name: str
-    output_mode: str
-    exam_year: str
-    captcha_timeout: int
-
-
-from .parsing import *
-from .collector import *
-
-def build_output_columns(subject_name: str, output_mode: str) -> list[str]:
-    subject_result_column = f"{subject_name} Result"
-    base_columns = [
-        "Scrape Status",
-        "Scrape Notes",
-        subject_result_column,
-    ]
-
-    if output_mode == "Results Only":
-        return base_columns
-
-    if output_mode == "Results + Ranks":
-        return base_columns + ["District Rank", "Island Rank"]
-
-    return base_columns + [
-        "Candidate Name",
-        "School",
-        "District",
-        "Medium",
-        "Index Number",
-        "District Rank",
-        "Island Rank",
-        "Z-Score",
-        "Subject Stream",
-        "Raw Results Block",
-    ]
-
-
-def ensure_output_columns(df: pd.DataFrame, subject_name: str, output_mode: str) -> str:
-    subject_result_column = f"{subject_name} Result"
-    for column in build_output_columns(subject_name, output_mode):
-        if column not in df.columns:
-            df[column] = None
-        df[column] = df[column].astype(object)
-    return subject_result_column
-
-
-def apply_parsed_data(
-    df: pd.DataFrame,
-    row_index: int,
-    parsed: dict[str, str | None],
-    subject_result_column: str,
-    output_mode: str,
-) -> None:
-    df.at[row_index, "Scrape Status"] = "Completed"
-    df.at[row_index, "Scrape Notes"] = ""
-    df.at[row_index, subject_result_column] = parsed["Selected Subject Result"]
-
-    if output_mode == "Results Only":
-        return
-
-    df.at[row_index, "District Rank"] = parsed["District Rank"]
-    df.at[row_index, "Island Rank"] = parsed["Island Rank"]
-
-    if output_mode == "Results + Ranks":
-        return
-
-    df.at[row_index, "Candidate Name"] = parsed["Candidate Name"]
-    df.at[row_index, "School"] = parsed["School"]
-    df.at[row_index, "District"] = parsed["District"]
-    df.at[row_index, "Medium"] = parsed["Medium"]
-    df.at[row_index, "Index Number"] = parsed["Index Number"]
-    df.at[row_index, "Z-Score"] = parsed["Z-Score"]
-    df.at[row_index, "Subject Stream"] = parsed["Subject Stream"]
-    df.at[row_index, "Raw Results Block"] = parsed["Raw Results Block"]
-
-
-def send_message(worker_queue: queue.Queue, message_type: str, **payload: object) -> None:
-    worker_queue.put({"type": message_type, **payload})
-
-
-def scraping_worker(
-    config: ScrapeConfig,
-    worker_queue: queue.Queue,
-    stop_event: threading.Event,
-    skip_event: threading.Event,
-) -> None:
-    start_time = time.perf_counter()
-    driver: webdriver.Chrome | None = None
-
-    try:
-        df = pd.read_excel(config.input_path)
-        if "NIC" not in df.columns:
-            raise ValueError("The Excel file must contain a 'NIC' column.")
-
-        subject_result_column = ensure_output_columns(
-            df, config.subject_name, config.output_mode
-        )
-        total_rows = len(df.index)
-
-        send_message(
-            worker_queue,
-            "status",
-            text=f"Loaded {total_rows} rows from {config.input_path.name}.",
-        )
-
-        # Performance optimization:
-        # - Validation happens before Selenium navigation, so bad NICs are rejected
-        #   immediately without opening the site.
-        # - One browser instance is reused for the entire batch instead of starting
-        #   Chrome for every row, which cuts the slowest setup cost dramatically.
-        driver = create_driver()
-        processed = 0
-        succeeded = 0
-        skipped = 0
-        failed = 0
-
-        for row_index, row in df.iterrows():
-            if stop_event.is_set():
-                raise StopRequested("Stop requested before processing the next row.")
-
-            nic = normalize_nic(row.get("NIC"))
-            row_started = time.perf_counter()
-            skip_event.clear()
-            send_message(worker_queue, "current", nic=nic or "<blank>")
-
-            if not is_valid_nic(nic):
-                df.at[row_index, "Scrape Status"] = "Skipped"
-                df.at[row_index, "Scrape Notes"] = "Invalid NIC format"
-                skipped += 1
-                processed += 1
-                send_message(
-                    worker_queue,
-                    "log",
-                    text=f"Skipped invalid NIC: {nic or '<blank>'}",
-                )
-                elapsed = time.perf_counter() - start_time
-                send_message(
-                    worker_queue,
-                    "progress",
-                    processed=processed,
-                    total=total_rows,
-                    succeeded=succeeded,
-                    skipped=skipped,
-                    failed=failed,
-                    elapsed=elapsed,
-                )
-                continue
-
-            try:
-                open_search_form(driver, config.exam_year)
-                nic_input = WebDriverWait(driver, 20).until(
-                    EC.presence_of_element_located(
-                        (By.CSS_SELECTOR, ".form-control.text-center")
-                    )
-                )
-                nic_input.clear()
-                nic_input.send_keys(nic)
-
-                send_message(
-                    worker_queue,
-                    "log",
-                    text=(
-                        f"NIC {nic}: solve the captcha in Chrome, submit the form, "
-                        f"or press 'Skip Current'."
-                    ),
-                )
-
-                raw_text = wait_for_results_or_skip(
-                    driver,
-                    config.captcha_timeout,
-                    stop_event,
-                    skip_event,
-                )
-                parsed = parse_results(raw_text, config.subject_name)
-                apply_parsed_data(
-                    df,
-                    row_index,
-                    parsed,
-                    subject_result_column,
-                    config.output_mode,
-                )
-
-                succeeded += 1
-                send_message(
-                    worker_queue,
-                    "log",
-                    text=(
-                        f"Completed {nic} | {subject_result_column}: "
-                        f"{parsed['Selected Subject Result'] or 'Not found'}"
-                    ),
-                )
-
-            except SkipCurrentRow as exc:
-                df.at[row_index, "Scrape Status"] = "Skipped"
-                df.at[row_index, "Scrape Notes"] = str(exc)
-                skipped += 1
-                send_message(worker_queue, "log", text=f"Skipped {nic}: {exc}")
-
-            except StopRequested:
-                raise
-
-            except Exception as exc:
-                df.at[row_index, "Scrape Status"] = "Error"
-                df.at[row_index, "Scrape Notes"] = str(exc)
-                failed += 1
-                send_message(worker_queue, "log", text=f"Error for {nic}: {exc}")
-
-            finally:
-                processed += 1
-                row_elapsed = time.perf_counter() - row_started
-                elapsed = time.perf_counter() - start_time
-
-                # Performance optimization:
-                # - The worker posts compact progress snapshots into a queue instead
-                #   of touching Tk widgets directly from the worker thread.
-                # - The GUI remains responsive because the main thread only performs
-                #   lightweight reads from the queue via after().
-                send_message(
-                    worker_queue,
-                    "progress",
-                    processed=processed,
-                    total=total_rows,
-                    succeeded=succeeded,
-                    skipped=skipped,
-                    failed=failed,
-                    elapsed=elapsed,
-                    last_row_seconds=row_elapsed,
-                )
-
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_path = config.input_path.with_name(f"completed_results_{timestamp}.xlsx")
-        df.to_excel(output_path, index=False)
-
-        send_message(
-            worker_queue,
-            "complete",
-            output_path=str(output_path),
-            processed=processed,
-            total=total_rows,
-            succeeded=succeeded,
-            skipped=skipped,
-            failed=failed,
-            stopped=False,
-        )
-
-    except StopRequested as exc:
-        output_path = None
-        try:
-            if "df" in locals():
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                output_path = config.input_path.with_name(
-                    f"partial_results_{timestamp}.xlsx"
-                )
-                df.to_excel(output_path, index=False)
-        except Exception:
-            output_path = None
-
-        send_message(
-            worker_queue,
-            "complete",
-            output_path=str(output_path) if output_path else "",
-            processed=locals().get("processed", 0),
-            total=locals().get("total_rows", 0),
-            succeeded=locals().get("succeeded", 0),
-            skipped=locals().get("skipped", 0),
-            failed=locals().get("failed", 0),
-            stopped=True,
-            reason=str(exc),
-        )
-
-    except Exception as exc:
-        send_message(worker_queue, "fatal", text=str(exc))
-
-    finally:
-        if driver is not None:
-            driver.quit()
+    def append(self, text):
+        self.lines.append(text)
 
 
 class ScraperApp(ctk.CTk):
-    def __init__(self) -> None:
+    def __init__(self):
+        self.preferences = load_preferences()
+        ctk.set_appearance_mode(self.preferences['appearance'])
+        ctk.set_default_color_theme('blue')
         super().__init__()
-        self.title("AL Results Scraper")
-        self.geometry("1080x760")
-        self.minsize(980, 700)
-        self.configure(fg_color=THEME_SURFACE)
-
-        ctk.set_appearance_mode("light")
-        ctk.set_default_color_theme("green")
-
-        self.worker_thread: threading.Thread | None = None
-        self.worker_queue: queue.Queue = queue.Queue()
-        self.stop_event = threading.Event()
-        self.skip_event = threading.Event()
-
-        self.file_path_var = ctk.StringVar(value="")
-        self.subject_var = ctk.StringVar(value="Combined Mathematics")
-        self.output_mode_var = ctk.StringVar(value=DEFAULT_OUTPUT_MODE)
-        self.exam_year_var = ctk.StringVar(value="2025")
-        self.timeout_var = ctk.StringVar(value=str(DEFAULT_TIMEOUT_SECONDS))
-        self.current_nic_var = ctk.StringVar(value="Current NIC: -")
-        self.progress_var = ctk.DoubleVar(value=0)
-        self.progress_label_var = ctk.StringVar(value="0 / 0 processed")
-        self.eta_var = ctk.StringVar(value="ETA: --")
-        self.summary_var = ctk.StringVar(value="Success: 0 | Skipped: 0 | Failed: 0")
-
-        self._build_layout()
-        self.protocol("WM_DELETE_WINDOW", self.on_close)
-
-    def _build_layout(self) -> None:
+        self.title('A/L Results Collector')
+        self.geometry('1120x850')
+        self.minsize(980, 720)
+        self.configure(fg_color=BG)
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(1, weight=1)
+        self.events = EventBuffer()
+        self.stop_event = threading.Event()
+        self.skip_event = threading.Event()
+        self.worker_thread = None
+        self.busy = False
+        self.phase = 'idle'
+        self.closing = False
+        self.workbook = None
+        self.config = None
+        self.has_results = False
+        self.last_output = None
+        self.log = ActivityLog()
+        self.log_dirty = False
+        self._destroyed = False
+        self.path_var = ctk.StringVar()
+        self.folder_var = ctk.StringVar()
+        self.year_var = ctk.StringVar(value=self.preferences['year'])
+        self.timeout_var = ctk.StringVar(value=str(self.preferences['timeout']))
+        self.search_var = ctk.StringVar()
+        self.appearance_var = ctk.StringVar(value=self.preferences['appearance'])
+        self.subject_vars = {s.id: ctk.BooleanVar(value=s.id in self.preferences['subjects']) for s in load_subjects()}
+        self.field_vars = {f: ctk.BooleanVar(value=f in self.preferences['fields']) for f in FIELDS}
+        self.settings_widgets = []
+        self.subject_widgets = []
+        self._build_layout()
+        self.search_var.trace_add('write', lambda *_: self._render_subjects())
+        self._render_subjects()
+        self.protocol('WM_DELETE_WINDOW', self.on_close)
+        self.after(100, self.process_events)
 
-        header = ctk.CTkFrame(
-            self,
-            fg_color=THEME_CARD,
-            corner_radius=18,
-            border_color="#D8E2DF",
-            border_width=1,
-        )
-        header.grid(row=0, column=0, padx=20, pady=(20, 12), sticky="nsew")
-        header.grid_columnconfigure(1, weight=1)
+    def label(self, parent, text, size=14, bold=False, muted=False, **kwargs):
+        return ctk.CTkLabel(parent, text=text, text_color=MUTED if muted else INK,
+                            font=ctk.CTkFont(family='Segoe UI', size=size, weight='bold' if bold else 'normal'), **kwargs)
 
-        title = ctk.CTkLabel(
-            header,
-            text="Advanced AL Results Scraper",
-            font=ctk.CTkFont(size=28, weight="bold"),
-            text_color=THEME_TEXT,
-        )
-        title.grid(row=0, column=0, columnspan=2, padx=22, pady=(18, 8), sticky="w")
+    def button(self, parent, text, command, primary=False, **kwargs):
+        return ctk.CTkButton(parent, text=text, command=command, height=36,
+                            fg_color=BUTTON if primary else ('#E5ECF7', '#2A3A54'),
+                            hover_color=HOVER if primary else ('#D6E1F2', '#3A4C69'),
+                            text_color='white' if primary else INK, corner_radius=7, **kwargs)
 
-        subtitle = ctk.CTkLabel(
-            header,
-            text=(
-                "Load an Excel file, choose the subject exactly as it appears on the website, "
-                "then process each NIC without freezing the desktop app."
-            ),
-            font=ctk.CTkFont(size=14),
-            justify="left",
-            text_color="#56736D",
-            wraplength=880,
-        )
-        subtitle.grid(row=1, column=0, columnspan=2, padx=22, pady=(0, 16), sticky="w")
+    def _build_layout(self):
+        header = ctk.CTkFrame(self, fg_color='transparent')
+        header.grid(row=0, column=0, sticky='ew', padx=26, pady=(22, 16))
+        header.grid_columnconfigure(0, weight=1)
+        self.label(header, 'A/L Results Collector', 27, True).grid(row=0, column=0, sticky='w')
+        self.label(header, 'Your class list. Only the results you need.', muted=True).grid(row=1, column=0, sticky='w', pady=(4, 0))
+        self.theme_menu = ctk.CTkOptionMenu(header, values=['System', 'Light', 'Dark'], variable=self.appearance_var,
+                                           command=self.change_appearance, width=112, fg_color=BUTTON, button_color=BUTTON)
+        self.theme_menu.grid(row=0, column=1, rowspan=2, sticky='e')
+        body = ctk.CTkFrame(self, fg_color='transparent')
+        body.grid(row=1, column=0, sticky='nsew', padx=26, pady=(0, 14))
+        body.grid_columnconfigure(0, weight=3, minsize=460)
+        body.grid_columnconfigure(1, weight=2, minsize=350)
+        body.grid_rowconfigure(0, weight=1)
+        setup = ctk.CTkScrollableFrame(body, fg_color=PANEL, corner_radius=10, border_width=1, border_color=LINE)
+        setup.grid(row=0, column=0, sticky='nsew', padx=(0, 16))
+        setup.grid_columnconfigure(0, weight=1)
+        self.label(setup, 'Collect results', 19, True).grid(row=0, column=0, sticky='w', padx=14, pady=(14, 14))
+        self.label(setup, 'Student list', bold=True).grid(row=1, column=0, sticky='w', padx=14)
+        file_row = ctk.CTkFrame(setup, fg_color='transparent')
+        file_row.grid(row=2, column=0, sticky='ew', padx=14, pady=(6, 4)); file_row.grid_columnconfigure(0, weight=1)
+        entry = ctk.CTkEntry(file_row, textvariable=self.path_var, placeholder_text='Choose an Excel file', height=36)
+        entry.grid(row=0, column=0, sticky='ew', padx=(0, 8))
+        browse = self.button(file_row, 'Browse', self.browse_file, width=84)
+        browse.grid(row=0, column=1)
+        self.settings_widgets.extend([entry, browse])
+        self.label(setup, "Use the first sheet, with a column named NIC.", 12, muted=True).grid(row=3, column=0, sticky='w', padx=14)
+        subject_header = ctk.CTkFrame(setup, fg_color='transparent')
+        subject_header.grid(row=4, column=0, sticky='ew', padx=14, pady=(18, 7)); subject_header.grid_columnconfigure(0, weight=1)
+        self.label(subject_header, 'Subjects', bold=True).grid(row=0, column=0, sticky='w')
+        self.selection_label = self.label(subject_header, '', 12, muted=True)
+        self.selection_label.grid(row=0, column=1)
+        clear = self.button(subject_header, 'Clear', self.clear_subjects, width=54)
+        clear.grid(row=0, column=2, padx=(10, 0)); self.settings_widgets.append(clear)
+        # CustomTkinter placeholders are not shown with textvariable attached.
+        search = ctk.CTkEntry(setup, placeholder_text='Search subjects, codes or ICT', height=34)
+        search.bind('<KeyRelease>', lambda _: self.search_var.set(search.get()))
+        search.grid(row=5, column=0, sticky='ew', padx=14, pady=(0, 8)); self.settings_widgets.append(search)
+        self.subject_list = ctk.CTkScrollableFrame(setup, height=210, fg_color=BG, corner_radius=7)
+        self.subject_list.grid(row=6, column=0, sticky='ew', padx=14)
+        self.subject_list.grid_columnconfigure(0, weight=1)
+        self.label(setup, 'Include extra fields', bold=True).grid(row=7, column=0, sticky='w', padx=14, pady=(18, 8))
+        fields = ctk.CTkFrame(setup, fg_color='transparent')
+        fields.grid(row=8, column=0, sticky='ew', padx=14)
+        fields.grid_columnconfigure((0, 1), weight=1)
+        for i, (name, variable) in enumerate(self.field_vars.items()):
+            widget = ctk.CTkCheckBox(fields, text=name, variable=variable, text_color=INK, font=('Segoe UI', 12),
+                                     checkbox_width=19, checkbox_height=19, fg_color=BUTTON, hover_color=HOVER)
+            widget.grid(row=i // 2, column=i % 2, sticky='w', pady=5, padx=(0, 8))
+            self.settings_widgets.append(widget)
+        options = ctk.CTkFrame(setup, fg_color='transparent')
+        options.grid(row=9, column=0, sticky='ew', padx=14, pady=(18, 0)); options.grid_columnconfigure(1, weight=1)
+        self.label(options, 'Exam year').grid(row=0, column=0, sticky='w', padx=(0, 14))
+        year = ctk.CTkEntry(options, textvariable=self.year_var, width=100)
+        year.grid(row=0, column=1, sticky='w'); self.settings_widgets.append(year)
+        self.advanced_button = self.button(setup, 'Advanced settings', self.toggle_advanced, width=150)
+        self.advanced_button.grid(row=10, column=0, sticky='w', padx=14, pady=14)
+        self.advanced = ctk.CTkFrame(setup, fg_color='transparent')
+        self.advanced.grid_columnconfigure(0, weight=1)
+        self.label(self.advanced, 'Output folder (defaults to the input folder)', 12).grid(row=0, column=0, sticky='w')
+        folder_entry = ctk.CTkEntry(self.advanced, textvariable=self.folder_var, placeholder_text='Same folder as the student list')
+        folder_entry.grid(row=1, column=0, sticky='ew', pady=6, padx=(0, 8))
+        folder_button = self.button(self.advanced, 'Choose', self.browse_folder, width=80)
+        folder_button.grid(row=1, column=1)
+        self.label(self.advanced, 'CAPTCHA timeout in seconds', 12).grid(row=2, column=0, sticky='w', pady=(7, 3))
+        timeout = ctk.CTkEntry(self.advanced, textvariable=self.timeout_var, width=100)
+        timeout.grid(row=3, column=0, sticky='w', pady=(0, 14))
+        self.settings_widgets.extend([folder_entry, folder_button, timeout])
+        right = ctk.CTkFrame(body, fg_color='transparent')
+        right.grid(row=0, column=1, sticky='nsew'); right.grid_columnconfigure(0, weight=1); right.grid_rowconfigure(4, weight=1)
+        self.label(right, 'Collection progress', 19, True).grid(row=0, column=0, sticky='w', pady=(14, 10))
+        self.status_label = self.label(right, 'Ready when you are.', 16, True, anchor='w', justify='left', wraplength=340)
+        self.status_label.grid(row=1, column=0, sticky='ew', pady=(0, 10))
+        info = ctk.CTkFrame(right, fg_color=PANEL, corner_radius=9, border_width=1, border_color=LINE)
+        info.grid(row=2, column=0, sticky='ew'); info.grid_columnconfigure(0, weight=1)
+        self.count_label = self.label(info, '0 / 0 students', 22, True)
+        self.count_label.grid(row=0, column=0, sticky='w', padx=18, pady=(18, 12))
+        self.progress = ctk.CTkProgressBar(info, progress_color=BUTTON, height=9)
+        self.progress.set(0); self.progress.grid(row=1, column=0, sticky='ew', padx=18)
+        self.summary_label = self.label(info, 'Completed 0   Skipped 0   Errors 0', 12, muted=True)
+        self.summary_label.grid(row=2, column=0, sticky='w', padx=18, pady=(10, 8))
+        self.current_label = self.label(info, 'No student in progress', 12, muted=True, anchor='w')
+        self.current_label.grid(row=3, column=0, sticky='ew', padx=18, pady=(0, 18))
+        self.label(right, 'Chrome will open for CAPTCHA. Complete it and\nsubmit on the results website for each student.', 13,
+                   muted=True, justify='left', anchor='w').grid(row=3, column=0, sticky='ew', pady=14)
+        self.log_box = ctk.CTkTextbox(right, fg_color=PANEL, text_color=INK, font=('Segoe UI', 12), corner_radius=9, wrap='word', state='disabled')
+        self.log_box.grid(row=4, column=0, sticky='nsew')
+        action_row = ctk.CTkFrame(right, fg_color='transparent')
+        action_row.grid(row=5, column=0, sticky='ew', pady=(14, 8)); action_row.grid_columnconfigure((0, 1), weight=1)
+        self.stop_button = self.button(action_row, 'Stop & save progress', self.stop_scraping, state='disabled')
+        self.stop_button.grid(row=0, column=0, sticky='ew', padx=(0, 5))
+        self.skip_button = self.button(action_row, 'Skip current', self.skip_current, state='disabled')
+        self.skip_button.grid(row=0, column=1, sticky='ew', padx=(5, 0))
+        self.start_button = self.button(right, 'Start collection', self.start_scraping, primary=True)
+        self.start_button.grid(row=6, column=0, sticky='ew', pady=(0, 8))
+        self.export_button = self.button(right, 'Export results to Excel', self.start_export, state='disabled')
+        self.export_button.grid(row=7, column=0, sticky='ew', pady=(0, 8))
+        self.open_button = self.button(right, 'Open output folder', self.open_output, state='disabled')
+        self.open_button.grid(row=8, column=0, sticky='ew')
+        self.label(self, f'v{__version__}  |  Student data stays on this computer, apart from lookups on doenets.lk.', 11,
+                   muted=True).grid(row=2, column=0, sticky='w', padx=26, pady=(0, 12))
 
-        controls = ctk.CTkFrame(self, fg_color="transparent")
-        controls.grid(row=1, column=0, padx=20, pady=(0, 20), sticky="nsew")
-        controls.grid_columnconfigure(0, weight=0)
-        controls.grid_columnconfigure(1, weight=1)
-        controls.grid_rowconfigure(1, weight=1)
+    def _render_subjects(self):
+        import textwrap
+        for widget in self.subject_list.winfo_children():
+            widget.destroy()
+        self.subject_widgets.clear()
+        for row, subject in enumerate(search_subjects(self.search_var.get())):
+            widget = ctk.CTkCheckBox(self.subject_list, text=f'{subject.code}  ' + textwrap.fill(subject.name, width=43),
+                                     variable=self.subject_vars[subject.id], command=self.update_selection_count,
+                                     text_color=INK, fg_color=BUTTON, hover_color=HOVER,
+                                     font=('Segoe UI', 13), checkbox_width=20, checkbox_height=20,
+                                     state='disabled' if self.busy else 'normal')
+            widget.grid(row=row, column=0, sticky='w', padx=8, pady=7)
+            self.subject_widgets.append(widget)
+        if not self.subject_widgets:
+            self.label(self.subject_list, 'No matching subjects.', muted=True).grid(row=0, column=0, pady=14)
+        self.update_selection_count()
 
-        settings_card = ctk.CTkFrame(
-            controls,
-            fg_color=THEME_CARD,
-            corner_radius=18,
-            border_color="#D8E2DF",
-            border_width=1,
-            width=340,
-        )
-        settings_card.grid(row=0, column=0, rowspan=2, padx=(0, 12), sticky="nsew")
-        settings_card.grid_columnconfigure(0, weight=1)
+    def update_selection_count(self):
+        self.selection_label.configure(text=f'{sum(v.get() for v in self.subject_vars.values())} selected')
 
-        settings_title = ctk.CTkLabel(
-            settings_card,
-            text="Run Settings",
-            font=ctk.CTkFont(size=20, weight="bold"),
-            text_color=THEME_TEXT,
-        )
-        settings_title.grid(row=0, column=0, padx=18, pady=(18, 12), sticky="w")
+    def clear_subjects(self):
+        for variable in self.subject_vars.values(): variable.set(False)
+        self.update_selection_count()
 
-        self._build_settings_form(settings_card)
+    def toggle_advanced(self):
+        if self.advanced.winfo_manager(): self.advanced.grid_remove()
+        else: self.advanced.grid(row=11, column=0, sticky='ew', padx=14)
 
-        right_panel = ctk.CTkFrame(controls, fg_color="transparent")
-        right_panel.grid(row=0, column=1, rowspan=2, sticky="nsew")
-        right_panel.grid_columnconfigure(0, weight=1)
-        right_panel.grid_rowconfigure(1, weight=1)
+    def browse_file(self):
+        path = filedialog.askopenfilename(title='Choose a student list', filetypes=[('Excel workbooks', '*.xlsx *.xls')])
+        if path: self.path_var.set(path)
 
-        progress_card = ctk.CTkFrame(
-            right_panel,
-            fg_color=THEME_CARD,
-            corner_radius=18,
-            border_color="#D8E2DF",
-            border_width=1,
-        )
-        progress_card.grid(row=0, column=0, sticky="ew")
-        progress_card.grid_columnconfigure(0, weight=1)
+    def browse_folder(self):
+        path = filedialog.askdirectory(title='Choose output folder')
+        if path: self.folder_var.set(path)
 
-        progress_title = ctk.CTkLabel(
-            progress_card,
-            text="Progress",
-            font=ctk.CTkFont(size=20, weight="bold"),
-            text_color=THEME_TEXT,
-        )
-        progress_title.grid(row=0, column=0, padx=18, pady=(18, 10), sticky="w")
+    def change_appearance(self, value):
+        ctk.set_appearance_mode(value)
+        self.persist_preferences()
 
-        progress_bar = ctk.CTkProgressBar(
-            progress_card,
-            variable=self.progress_var,
-            progress_color=THEME_GREEN,
-            height=18,
-            corner_radius=10,
-        )
-        progress_bar.grid(row=1, column=0, padx=18, pady=(0, 10), sticky="ew")
-
-        progress_label = ctk.CTkLabel(
-            progress_card,
-            textvariable=self.progress_label_var,
-            font=ctk.CTkFont(size=15, weight="bold"),
-            text_color=THEME_TEXT,
-        )
-        progress_label.grid(row=2, column=0, padx=18, pady=(0, 4), sticky="w")
-
-        eta_label = ctk.CTkLabel(
-            progress_card,
-            textvariable=self.eta_var,
-            font=ctk.CTkFont(size=14),
-            text_color="#56736D",
-        )
-        eta_label.grid(row=3, column=0, padx=18, pady=(0, 4), sticky="w")
-
-        current_label = ctk.CTkLabel(
-            progress_card,
-            textvariable=self.current_nic_var,
-            font=ctk.CTkFont(size=14),
-            text_color="#56736D",
-        )
-        current_label.grid(row=4, column=0, padx=18, pady=(0, 4), sticky="w")
-
-        summary_label = ctk.CTkLabel(
-            progress_card,
-            textvariable=self.summary_var,
-            font=ctk.CTkFont(size=14),
-            text_color="#56736D",
-        )
-        summary_label.grid(row=5, column=0, padx=18, pady=(0, 18), sticky="w")
-
-        log_card = ctk.CTkFrame(
-            right_panel,
-            fg_color=THEME_CARD,
-            corner_radius=18,
-            border_color="#D8E2DF",
-            border_width=1,
-        )
-        log_card.grid(row=1, column=0, pady=(12, 0), sticky="nsew")
-        log_card.grid_columnconfigure(0, weight=1)
-        log_card.grid_rowconfigure(1, weight=1)
-
-        log_title = ctk.CTkLabel(
-            log_card,
-            text="Run Log",
-            font=ctk.CTkFont(size=20, weight="bold"),
-            text_color=THEME_TEXT,
-        )
-        log_title.grid(row=0, column=0, padx=18, pady=(18, 10), sticky="w")
-
-        self.log_text = ctk.CTkTextbox(
-            log_card,
-            fg_color="#F8FAFA",
-            border_color="#D8E2DF",
-            border_width=1,
-            corner_radius=14,
-            wrap="word",
-            font=ctk.CTkFont(family="Consolas", size=13),
-        )
-        self.log_text.grid(row=1, column=0, padx=18, pady=(0, 18), sticky="nsew")
-        self.log_text.insert("end", "Application ready.\n")
-        self.log_text.configure(state="disabled")
-
-    def _build_settings_form(self, parent: ctk.CTkFrame) -> None:
-        label_color = "#4D6661"
-
-        file_label = ctk.CTkLabel(
-            parent,
-            text="Excel File",
-            font=ctk.CTkFont(size=14, weight="bold"),
-            text_color=label_color,
-        )
-        file_label.grid(row=1, column=0, padx=18, pady=(4, 6), sticky="w")
-
-        file_frame = ctk.CTkFrame(parent, fg_color="transparent")
-        file_frame.grid(row=2, column=0, padx=18, pady=(0, 12), sticky="ew")
-        file_frame.grid_columnconfigure(0, weight=1)
-
-        self.file_entry = ctk.CTkEntry(
-            file_frame,
-            textvariable=self.file_path_var,
-            placeholder_text="Select the input Excel file",
-            height=40,
-            corner_radius=12,
-        )
-        self.file_entry.grid(row=0, column=0, padx=(0, 8), sticky="ew")
-
-        self.browse_button = ctk.CTkButton(
-            file_frame,
-            text="Browse",
-            command=self.browse_file,
-            width=96,
-            height=40,
-            corner_radius=12,
-            fg_color=THEME_GREEN,
-            hover_color="#175A4D",
-        )
-        self.browse_button.grid(row=0, column=1, sticky="e")
-
-        subject_label = ctk.CTkLabel(
-            parent,
-            text="Subject Name",
-            font=ctk.CTkFont(size=14, weight="bold"),
-            text_color=label_color,
-        )
-        subject_label.grid(row=3, column=0, padx=18, pady=(4, 6), sticky="w")
-
-        self.subject_entry = ctk.CTkEntry(
-            parent,
-            textvariable=self.subject_var,
-            placeholder_text="Example: Combined Mathematics",
-            height=40,
-            corner_radius=12,
-        )
-        self.subject_entry.grid(row=4, column=0, padx=18, pady=(0, 12), sticky="ew")
-
-        output_label = ctk.CTkLabel(
-            parent,
-            text="Output Type",
-            font=ctk.CTkFont(size=14, weight="bold"),
-            text_color=label_color,
-        )
-        output_label.grid(row=5, column=0, padx=18, pady=(4, 6), sticky="w")
-
-        self.output_menu = ctk.CTkOptionMenu(
-            parent,
-            values=["Results Only", "Results + Ranks", "Full Student Data"],
-            variable=self.output_mode_var,
-            height=40,
-            corner_radius=12,
-            fg_color=THEME_GREEN,
-            button_color="#175A4D",
-            button_hover_color="#12443A",
-            dropdown_fg_color=THEME_CARD,
-            dropdown_hover_color="#EAF1EF",
-            text_color="#FFFFFF",
-        )
-        self.output_menu.grid(row=6, column=0, padx=18, pady=(0, 12), sticky="ew")
-
-        compact_row = ctk.CTkFrame(parent, fg_color="transparent")
-        compact_row.grid(row=7, column=0, padx=18, pady=(0, 12), sticky="ew")
-        compact_row.grid_columnconfigure(0, weight=1)
-        compact_row.grid_columnconfigure(1, weight=1)
-
-        year_label = ctk.CTkLabel(
-            compact_row,
-            text="Exam Year",
-            font=ctk.CTkFont(size=14, weight="bold"),
-            text_color=label_color,
-        )
-        year_label.grid(row=0, column=0, padx=(0, 6), pady=(0, 6), sticky="w")
-
-        timeout_label = ctk.CTkLabel(
-            compact_row,
-            text="Captcha Timeout (s)",
-            font=ctk.CTkFont(size=14, weight="bold"),
-            text_color=label_color,
-        )
-        timeout_label.grid(row=0, column=1, padx=(6, 0), pady=(0, 6), sticky="w")
-
-        self.year_entry = ctk.CTkEntry(
-            compact_row,
-            textvariable=self.exam_year_var,
-            height=40,
-            corner_radius=12,
-        )
-        self.year_entry.grid(row=1, column=0, padx=(0, 6), sticky="ew")
-
-        self.timeout_entry = ctk.CTkEntry(
-            compact_row,
-            textvariable=self.timeout_var,
-            height=40,
-            corner_radius=12,
-        )
-        self.timeout_entry.grid(row=1, column=1, padx=(6, 0), sticky="ew")
-
-        helper = ctk.CTkLabel(
-            parent,
-            text=(
-                "NIC validation runs before Selenium starts. Invalid values are marked "
-                "as skipped automatically to save time."
-            ),
-            font=ctk.CTkFont(size=13),
-            justify="left",
-            wraplength=280,
-            text_color="#6A827D",
-        )
-        helper.grid(row=8, column=0, padx=18, pady=(0, 18), sticky="w")
-
-        actions = ctk.CTkFrame(parent, fg_color="transparent")
-        actions.grid(row=9, column=0, padx=18, pady=(0, 18), sticky="ew")
-        actions.grid_columnconfigure(0, weight=1)
-        actions.grid_columnconfigure(1, weight=1)
-        actions.grid_columnconfigure(2, weight=1)
-
-        self.start_button = ctk.CTkButton(
-            actions,
-            text="Start Scraping",
-            command=self.start_scraping,
-            height=42,
-            corner_radius=12,
-            fg_color=THEME_GREEN,
-            hover_color="#175A4D",
-        )
-        self.start_button.grid(row=0, column=0, padx=(0, 6), sticky="ew")
-
-        self.stop_button = ctk.CTkButton(
-            actions,
-            text="Stop",
-            command=self.stop_scraping,
-            state="disabled",
-            height=42,
-            corner_radius=12,
-            fg_color="#C75450",
-            hover_color="#AA4341",
-        )
-        self.stop_button.grid(row=0, column=1, padx=6, sticky="ew")
-
-        self.skip_button = ctk.CTkButton(
-            actions,
-            text="Skip Current",
-            command=self.skip_current,
-            state="disabled",
-            height=42,
-            corner_radius=12,
-            fg_color="#D2A63F",
-            hover_color="#B78B29",
-        )
-        self.skip_button.grid(row=0, column=2, padx=(6, 0), sticky="ew")
-
-    def browse_file(self) -> None:
-        selected_file = filedialog.askopenfilename(
-            title="Select Excel file",
-            filetypes=[("Excel files", "*.xlsx *.xls"), ("All files", "*.*")],
-        )
-        if selected_file:
-            self.file_path_var.set(selected_file)
-
-    def append_log(self, message: str) -> None:
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        self.log_text.configure(state="normal")
-        self.log_text.insert("end", f"[{timestamp}] {message}\n")
-        self.log_text.see("end")
-        self.log_text.configure(state="disabled")
-
-    def start_scraping(self) -> None:
-        if self.worker_thread and self.worker_thread.is_alive():
-            messagebox.showinfo("Scraper Running", "A scraping job is already in progress.")
-            return
-
-        file_path = Path(self.file_path_var.get().strip())
-        subject_name = normalize_spaces(self.subject_var.get())
-        exam_year = self.exam_year_var.get().strip()
-
+    def persist_preferences(self):
         try:
-            captcha_timeout = int(self.timeout_var.get().strip())
+            timeout = int(self.timeout_var.get())
         except ValueError:
-            messagebox.showerror("Invalid Timeout", "Captcha timeout must be a whole number.")
-            return
-
-        if not file_path.exists():
-            messagebox.showerror("Missing File", "Select a valid Excel file before starting.")
-            return
-
-        if not subject_name:
-            messagebox.showerror(
-                "Missing Subject",
-                "Enter the subject name exactly as it appears on the website.",
-            )
-            return
-
-        if not exam_year.isdigit():
-            messagebox.showerror("Invalid Year", "Exam year must be numeric.")
-            return
-
-        if captcha_timeout <= 0:
-            messagebox.showerror(
-                "Invalid Timeout",
-                "Captcha timeout must be greater than zero seconds.",
-            )
-            return
-
-        config = ScrapeConfig(
-            input_path=file_path,
-            subject_name=subject_name,
-            output_mode=self.output_mode_var.get(),
-            exam_year=exam_year,
-            captcha_timeout=captcha_timeout,
-        )
-
-        self.worker_queue = queue.Queue()
-        self.stop_event.clear()
-        self.skip_event.clear()
-        self.progress_var.set(0)
-        self.progress_label_var.set("0 / 0 processed")
-        self.eta_var.set("ETA: --")
-        self.summary_var.set("Success: 0 | Skipped: 0 | Failed: 0")
-        self.current_nic_var.set("Current NIC: -")
-        self.append_log(
-            f"Starting run for subject '{subject_name}' with output mode '{config.output_mode}'."
-        )
-
-        self.set_running_state(True)
-        self.worker_thread = threading.Thread(
-            target=scraping_worker,
-            args=(config, self.worker_queue, self.stop_event, self.skip_event),
-            daemon=True,
-        )
-        self.worker_thread.start()
-        self.after(150, self.process_worker_messages)
-
-    def set_running_state(self, is_running: bool) -> None:
-        running_state = "disabled" if is_running else "normal"
-        control_state = "normal" if is_running else "disabled"
-
-        self.start_button.configure(state=running_state)
-        self.file_entry.configure(state=running_state)
-        self.browse_button.configure(state=running_state)
-        self.subject_entry.configure(state=running_state)
-        self.output_menu.configure(state=running_state)
-        self.year_entry.configure(state=running_state)
-        self.timeout_entry.configure(state=running_state)
-        self.stop_button.configure(state=control_state)
-        self.skip_button.configure(state=control_state)
-
-    def stop_scraping(self) -> None:
-        if self.worker_thread and self.worker_thread.is_alive():
-            self.stop_event.set()
-            self.append_log("Stop requested. The current run will finish its current polling cycle.")
-
-    def skip_current(self) -> None:
-        if self.worker_thread and self.worker_thread.is_alive():
-            self.skip_event.set()
-            self.append_log("Skip requested for the current NIC.")
-
-    def process_worker_messages(self) -> None:
+            timeout = 180
         try:
-            while True:
-                message = self.worker_queue.get_nowait()
-                message_type = message["type"]
+            save_preferences({'appearance': self.appearance_var.get(),
+                              'subjects': [sid for sid, v in self.subject_vars.items() if v.get()],
+                              'fields': [name for name, v in self.field_vars.items() if v.get()],
+                              'year': self.year_var.get().strip(), 'timeout': timeout})
+        except OSError:
+            self.append_log('Preferences could not be saved. Collection progress is stored separately.')
 
-                if message_type == "log":
-                    self.append_log(str(message["text"]))
+    def append_log(self, text):
+        self.log.append(f'{datetime.now():%H:%M:%S}  {text}')
+        self.log_dirty = True
 
-                elif message_type == "status":
-                    self.append_log(str(message["text"]))
-
-                elif message_type == "current":
-                    self.current_nic_var.set(f"Current NIC: {message['nic']}")
-
-                elif message_type == "progress":
-                    self.update_progress(
-                        processed=int(message["processed"]),
-                        total=int(message["total"]),
-                        succeeded=int(message["succeeded"]),
-                        skipped=int(message["skipped"]),
-                        failed=int(message["failed"]),
-                        elapsed=float(message["elapsed"]),
-                    )
-
-                elif message_type == "complete":
-                    self.finish_run(message)
-
-                elif message_type == "fatal":
-                    self.set_running_state(False)
-                    self.append_log(f"Fatal error: {message['text']}")
-                    messagebox.showerror("Scraping Failed", str(message["text"]))
-
-        except queue.Empty:
-            pass
-
-        if self.worker_thread and self.worker_thread.is_alive():
-            self.after(150, self.process_worker_messages)
-
-    def update_progress(
-        self,
-        processed: int,
-        total: int,
-        succeeded: int,
-        skipped: int,
-        failed: int,
-        elapsed: float,
-    ) -> None:
-        ratio = (processed / total) if total else 0
-        self.progress_var.set(ratio)
-        self.progress_label_var.set(f"{processed} / {total} processed")
-        self.summary_var.set(
-            f"Success: {succeeded} | Skipped: {skipped} | Failed: {failed}"
-        )
-
-        if processed > 0 and total > processed:
-            average_seconds = elapsed / processed
-            remaining_seconds = int(average_seconds * (total - processed))
-            minutes, seconds = divmod(remaining_seconds, 60)
-            hours, minutes = divmod(minutes, 60)
-            if hours:
-                self.eta_var.set(f"ETA: {hours}h {minutes}m {seconds}s")
-            elif minutes:
-                self.eta_var.set(f"ETA: {minutes}m {seconds}s")
-            else:
-                self.eta_var.set(f"ETA: {seconds}s")
-        elif processed == total and total:
-            self.eta_var.set("ETA: 0s")
-        else:
-            self.eta_var.set("ETA: --")
-
-    def finish_run(self, message: dict[str, object]) -> None:
-        self.set_running_state(False)
-        self.current_nic_var.set("Current NIC: -")
-
-        output_path = str(message.get("output_path") or "")
-        succeeded = int(message.get("succeeded", 0))
-        skipped = int(message.get("skipped", 0))
-        failed = int(message.get("failed", 0))
-        stopped = bool(message.get("stopped"))
-
-        if stopped:
-            reason = str(message.get("reason") or "Stopped by user.")
-            self.append_log(reason)
-            if output_path:
-                self.append_log(f"Partial results saved to: {output_path}")
-                messagebox.showinfo(
-                    "Scraping Stopped",
-                    f"{reason}\n\nPartial results saved to:\n{output_path}",
-                )
-            else:
-                messagebox.showinfo("Scraping Stopped", reason)
+    def _render_log(self):
+        if not self.log_dirty:
             return
+        self.log_box.configure(state='normal')
+        self.log_box.delete('1.0', 'end')
+        self.log_box.insert('end', '\n'.join(self.log.lines))
+        self.log_box.see('end')
+        self.log_box.configure(state='disabled')
+        self.log_dirty = False
 
-        self.append_log(
-            f"Completed run. Success: {succeeded}, Skipped: {skipped}, Failed: {failed}"
-        )
-        if output_path:
-            self.append_log(f"Results saved to: {output_path}")
-            messagebox.showinfo(
-                "Scraping Complete",
-                f"Run completed successfully.\n\nSaved file:\n{output_path}",
-            )
+    def set_busy(self, busy, phase='idle'):
+        self.busy = busy; self.phase = phase
+        for widget in [*self.settings_widgets, *self.subject_widgets]:
+            widget.configure(state='disabled' if busy else 'normal')
+        self.start_button.configure(state='disabled' if busy else 'normal')
+        self.export_button.configure(state='normal' if self.has_results and not busy else 'disabled')
+        self.stop_button.configure(state='normal' if busy and phase == 'collecting' else 'disabled')
+        self.skip_button.configure(state='normal' if busy and phase == 'collecting' else 'disabled')
 
-    def on_close(self) -> None:
-        if self.worker_thread and self.worker_thread.is_alive():
-            should_close = messagebox.askyesno(
-                "Close Application",
-                "A scraping job is still running. Stop it and close the application?",
-            )
-            if not should_close:
-                return
-            self.stop_event.set()
+    def _spawn(self, target):
+        self.worker_thread = threading.Thread(target=target, daemon=False)
+        self.worker_thread.start()
 
-        self.destroy()
+    def start_scraping(self):
+        if self.busy: return
+        try:
+            path = Path(self.path_var.get().strip()).resolve()
+            config = RunConfig(path, tuple(sid for sid, v in self.subject_vars.items() if v.get()),
+                               tuple(name for name, v in self.field_vars.items() if v.get()),
+                               self.year_var.get().strip(), int(self.timeout_var.get()),
+                               Path(self.folder_var.get().strip()).resolve() if self.folder_var.get().strip() else path.parent)
+            validate_config(config)
+        except ValueError as exc:
+            messagebox.showerror('Check your selections', str(exc), parent=self); return
+        self.persist_preferences()
+        self.set_busy(True, 'loading'); self.status_label.configure(text='Checking your student list…')
+        def prepare():
+            try:
+                book = load_workbook(config.input_path)
+                try:
+                    store = CheckpointStore.open(book, config)
+                    saved = len(store.results()); store.close(); mismatch = False
+                except CheckpointMismatch:
+                    saved = 0; mismatch = True
+                invalid = sum(error is not None for _, _, error in validate_rows(book))
+                self.events.put(WorkerEvent('prepared', {'book': book, 'config': config, 'saved': saved,
+                                                        'mismatch': mismatch, 'invalid': invalid}))
+            except Exception as exc:
+                self.events.put(WorkerEvent('preparation_failed', {'error': str(exc)}))
+        self._spawn(prepare)
+
+    def _prepared(self, payload):
+        if self.closing:
+            self.set_busy(False); self.destroy(); return
+        fresh = False
+        if payload['mismatch']:
+            fresh = messagebox.askyesno('Unfinished collection',
+                'Saved progress belongs to another workbook or different selections.\n\nDiscard that progress and start this collection?', parent=self)
+            if not fresh:
+                self.set_busy(False); self.status_label.configure(text='Saved progress kept.'); return
+        elif payload['saved']:
+            answer = messagebox.askyesnocancel('Resume collection',
+                f"{payload['saved']} rows are already saved.\n\nYes: resume pending students.\nNo: discard these results and start fresh.\nCancel: keep progress without starting.", parent=self)
+            if answer is None:
+                self.set_busy(False); self.status_label.configure(text='Saved progress kept.'); return
+            fresh = not answer
+        self.workbook = payload['book']; self.config = payload['config']
+        self.has_results = bool(payload['saved'] and not fresh)
+        self.stop_event.clear(); self.skip_event.clear()
+        self.progress.set(0)
+        self.count_label.configure(text=f"{0 if fresh else payload['saved']} / {len(self.workbook.frame)} students")
+        self.append_log(f"Loaded {len(self.workbook.frame)} rows. {payload['invalid']} invalid NICs will be marked skipped.")
+        self.set_busy(True, 'collecting'); self.status_label.configure(text='Opening the results website…')
+        def run():
+            try:
+                if fresh: checkpoint_path().unlink(missing_ok=True)
+                store = CheckpointStore.open(self.workbook, self.config)
+                collect(self.config, self.workbook, store, self.events.put, self.stop_event, self.skip_event)
+            except Exception as exc:
+                self.events.put(WorkerEvent('fatal', {'error': str(exc), 'processed': 0}))
+        self._spawn(run)
+
+    def stop_scraping(self):
+        self.stop_event.set(); self.status_label.configure(text='Stopping and keeping saved progress…')
+        self.stop_button.configure(state='disabled'); self.skip_button.configure(state='disabled')
+
+    def skip_current(self):
+        self.skip_event.set()
+
+    def start_export(self):
+        if self.busy or not self.has_results: return
+        folder = filedialog.askdirectory(title='Export results to this folder', initialdir=str(self.config.output_dir))
+        if not folder: return
+        from dataclasses import replace
+        config = replace(self.config, output_dir=Path(folder))
+        self.set_busy(True, 'exporting'); self.status_label.configure(text='Writing your Excel file…')
+        def run():
+            store = None
+            try:
+                store = CheckpointStore.open(self.workbook, self.config)
+                results = store.results()
+                pending = bool(store.pending_positions())
+                output = export_results(self.workbook, config, results)
+                if not pending: store.discard()
+                self.events.put(WorkerEvent('exported', {'path': output, 'pending': pending}))
+            except Exception as exc:
+                self.events.put(WorkerEvent('export_failed', {'error': str(exc)}))
+            finally:
+                if store: store.close()
+        self._spawn(run)
+
+    def process_events(self):
+        for event in self.events.drain():
+            p = event.payload
+            if event.kind == 'log': self.append_log(p['text'])
+            elif event.kind == 'prepared': self._prepared(p)
+            elif event.kind == 'current':
+                self.current_label.configure(text=f"Row {p['position'] + 1}  ·  NIC {p['nic'] or '(blank)'}")
+                self.status_label.configure(text='Complete CAPTCHA in Chrome.')
+            elif event.kind == 'progress': self._show_progress(p)
+            elif event.kind in ('finished', 'stopped', 'fatal'):
+                self.has_results = p.get('processed', 0) > 0
+                if 'total' in p: self._show_progress(p)
+                self.set_busy(False)
+                self.current_label.configure(text='No student in progress')
+                text = {'finished': 'Collection finished. Export your results.', 'stopped': 'Stopped. Resume or export partial results.',
+                        'fatal': 'Collection interrupted. Saved progress is kept.'}[event.kind]
+                self.status_label.configure(text=text); self.append_log(text)
+                if event.kind == 'fatal':
+                    self.append_log(p['error'])
+                    if not self.closing: messagebox.showerror('Collection interrupted', p['error'], parent=self)
+                if self.closing: self.persist_preferences(); self.destroy(); return
+            elif event.kind == 'preparation_failed':
+                self.set_busy(False); self.status_label.configure(text='Check the student list and try again.')
+                if not self.closing: messagebox.showerror('Cannot read student list', p['error'], parent=self)
+                else: self.destroy(); return
+            elif event.kind == 'exported':
+                self.last_output = p['path']; self.has_results = p['pending']; self.set_busy(False)
+                self.status_label.configure(text='Excel file saved.' if not p['pending'] else 'Partial results saved. You can resume collection.')
+                self.append_log(f"Saved to {p['path']}")
+                self.open_button.configure(state='normal')
+                if self.closing: self.destroy(); return
+            elif event.kind == 'export_failed':
+                self.set_busy(False); self.status_label.configure(text='Export failed. Progress is still saved.')
+                self.append_log(p['error'])
+                if not self.closing:
+                    messagebox.showerror('Cannot save Excel file', 'Close any locked workbook or choose another output folder, then export again.\n\n' + p['error'], parent=self)
+                else: self.destroy(); return
+        if self.winfo_exists():
+            self._render_log()
+            self.after(150, self.process_events)
+
+    def _show_progress(self, p):
+        self.progress.set(p['processed'] / p['total'] if p['total'] else 0)
+        self.count_label.configure(text=f"{p['processed']} / {p['total']} students")
+        self.summary_label.configure(text=f"Completed {p['completed']}   Skipped {p['skipped']}   Errors {p['failed']}")
+
+    def open_output(self):
+        if self.last_output: os.startfile(str(self.last_output.parent))
+
+    def on_close(self):
+        if self.busy:
+            if not messagebox.askyesno('Close collector', 'Stop collection and close after saving progress?\nAny export already running will finish first.', parent=self): return
+            self.closing = True
+            self.stop_scraping()
+        else:
+            self.persist_preferences(); self.destroy()
+
+    def destroy(self):
+        if self._destroyed:
+            return
+        self._destroyed = True
+        # Cancel callbacks before Tcl removes their Python command registrations.
+        for callback in self.tk.call('after', 'info'):
+            try:
+                self.tk.call('after', 'cancel', callback)
+            except Exception:
+                pass
+        super().destroy()
 
 
 def launch():
-    app = ScraperApp()
-    app.mainloop()
+    import argparse
+    import json
+    import sys
+    from .instance import InstanceLock
+    parser = argparse.ArgumentParser(description='A/L Results Collector')
+    parser.add_argument('--smoke-test', action='store_true', help='Open and close the window for distribution verification')
+    parser.add_argument('--report', type=Path, help='Write smoke-test diagnostics to this file')
+    args = parser.parse_args()
+    try:
+        with InstanceLock():
+            app = ScraperApp()
+            if args.smoke_test:
+                def finish():
+                    if args.report:
+                        args.report.write_text(json.dumps({'version': __version__, 'subjects': len(load_subjects()),
+                                                         'frozen': bool(getattr(sys, 'frozen', False)), 'gui': 'opened'}, indent=2), encoding='utf-8')
+                    app.destroy()
+                app.after(1200, finish)
+            app.mainloop()
+    except RuntimeError as exc:
+        root = ctk.CTk(); root.withdraw()
+        messagebox.showerror('Cannot open collector', str(exc), parent=root)
+        root.destroy()

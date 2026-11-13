@@ -2,6 +2,8 @@ from dataclasses import replace
 from pathlib import Path
 import tempfile
 import unittest
+import subprocess
+import sys
 from unittest.mock import patch
 import pandas as pd
 from al_results.models import InputWorkbook, RunConfig, RowResult
@@ -55,3 +57,24 @@ class CheckpointTests(unittest.TestCase):
         self.assertEqual(store.results(), [])
         store.save(RowResult(0, 'Error', {}, 'timeout'))
         self.assertEqual(store.pending_positions(), [1, 2])
+
+    def test_committed_result_survives_process_exit_without_cleanup(self):
+        script = '''
+import os, sys
+from pathlib import Path
+import pandas as pd
+import al_results.checkpoints as checkpoints
+from al_results.models import InputWorkbook, RunConfig, RowResult
+root=Path(sys.argv[1])
+checkpoints.checkpoint_path=lambda: root / 'current.sqlite3'
+book=InputWorkbook(root/'a.xlsx', 'hash1', 'Sheet1', pd.DataFrame({'NIC':['900000000V']*3}))
+config=RunConfig(book.path, ('20',), (), '2025', 180, root)
+store=checkpoints.CheckpointStore.open(book,config)
+store.save(RowResult(0,'Completed',{'subject:20':'A'}))
+os._exit(33)
+'''
+        result = subprocess.run([sys.executable, '-c', script, str(self.root)], capture_output=True)
+        self.assertEqual(result.returncode, 33, result.stderr)
+        store = CheckpointStore.open(self.book, self.config)
+        self.assertEqual(store.results()[0].values, {'subject:20': 'A'})
+        self.assertEqual(store.pending_positions(), [1, 2]); store.close()
