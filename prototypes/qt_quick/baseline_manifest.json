@@ -1,0 +1,18 @@
+{
+  "checker.py": "b810c7dd9547079df3db3b4435451d69fe558317fbfe5d4d31d798b1eed824bb",
+  "requirements.txt": "f0be85543751fc34e0167de6e154ffb036ab63b75b1477576e793a78ddcc99d8",
+  "requirements-dev.txt": "3a6d6a505b818c08457e794d76eb921ab75aa5edcefc6c1ef8a50e17f2ee411b",
+  "al_results/checkpoints.py": "8775d01247e1b8b912b2163dfff5f42d60fdfb026562357b823d9d00e3c82b69",
+  "al_results/collector.py": "7308b3a119c70d82138b8fb4d2fc1de20d1d714569a614f5f7a46399b65c0c84",
+  "al_results/events.py": "2ff43ef76d21851a117b588093c08bae2cab46fae571fac75b66f0ceadd740e3",
+  "al_results/excel_io.py": "f4515681a22141ed4783cf9136dbbcc08e097f5c92f4dc7426dfe43a83c352b0",
+  "al_results/instance.py": "986c45a6b343ef2c3c5591cd39b9d529fa14445920b798172efdeb694ced8e3b",
+  "al_results/models.py": "049d9f2daf79c20df78d4434d4bd04ad2680e5003ca58915a781da69be79f0e2",
+  "al_results/parsing.py": "d0f66028ce2f3b896b72c3f0cf7fe5e9c5ae27524d2d913c05e67cbfb1acc27f",
+  "al_results/settings.py": "05d19012512177161d94579207b139a289b22ce916994d99453471ebd65248ad",
+  "al_results/subjects.py": "ff1579ac528bac1e4b7ccec3b41ddc03b108dbf95ee1faece2078f967e429590",
+  "al_results/ui.py": "9f2c53a584b4782c7a86c20f0c90ce35740a5e91ca05428762ea51d6d5fe108e",
+  "al_results/widgets.py": "86c8b7ad6a6de369da040dee15de34f58faee9af9f589e806a4f375ebd0ce209",
+  "al_results/__init__.py": "ed5c87a78f0e51341053296a4ed0f62989839d9d4de6a536f96162cb8045604a",
+  "al_results/data/subjects.json": "e46a0927a24299339a2a8a75e560fb6db97633f88cc775c865b0b629c8adb748"
+}

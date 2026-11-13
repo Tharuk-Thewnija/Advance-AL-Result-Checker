@@ -9,6 +9,22 @@ from tests.test_collector import BrowserStub
 
 
 class UIFlowTests(unittest.TestCase):
+    def test_search_and_resize_reuse_subject_controls(self):
+        original = {widget.cget('text'): widget for widget in self.app.subject_widgets}
+        self.app.search_var.set('20'); self.app.update()
+        self.app.search_var.set(''); self.app.update()
+        self.assertEqual({widget.cget('text'): widget for widget in self.app.subject_widgets}, original)
+        self.app.geometry('1150x820'); self.app.update()
+        self.assertEqual({widget.cget('text'): widget for widget in self.app.subject_widgets}, original)
+
+    def test_stage_pills_support_all_workflow_transitions(self):
+        for stage in ('configure', 'collect', 'export', 'configure'):
+            self.app._set_stage(stage)
+            self.app.update()
+            for key, (frame, _) in self.app.stage_pills.items():
+                self.assertEqual(frame.cget('border_width'), 1 if key == stage else 0)
+                self.assertNotEqual(frame.cget('border_color'), 'transparent')
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
