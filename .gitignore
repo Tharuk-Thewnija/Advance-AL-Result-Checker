@@ -1,1 +1,16 @@
 /Files
+__pycache__/
+*.py[cod]
+.superpowers/
+build/
+dist/
+*.sqlite3
+*.sqlite3-*
+*.log
+.venv/
+*.xlsx
+*.xls
+!Template.xlsx
+!tests/fixtures/*.xlsx
+!tests/fixtures/*.xls
+smoke-report.json

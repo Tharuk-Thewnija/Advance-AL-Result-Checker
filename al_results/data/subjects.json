@@ -1,0 +1,412 @@
+{
+  "version": "2025-2026-11-13",
+  "exam_year": "2025",
+  "verified_date": "2026-11-13",
+  "sources": [
+    "https://doenets.lk/documents/news-headlines/Common_Documentor3languages_Subject_List.pdf",
+    "https://www.doenets.lk/images/resources/STAT/2025ALPOCFinal%20%20EDIT_1775557559480.pdf"
+  ],
+  "coverage": "Official subject-number list, cross-checked with 2025 performance tables. Includes Common General Test and Drama & Theatre (English), which may not appear in yearly statistics. Future exam-year changes require catalogue review.",
+  "subjects": [
+    {
+      "id": "01",
+      "name": "Physics",
+      "code": "01",
+      "aliases": []
+    },
+    {
+      "id": "02",
+      "name": "Chemistry",
+      "code": "02",
+      "aliases": []
+    },
+    {
+      "id": "07",
+      "name": "Mathematics",
+      "code": "07",
+      "aliases": []
+    },
+    {
+      "id": "08",
+      "name": "Agricultural Science",
+      "code": "08",
+      "aliases": []
+    },
+    {
+      "id": "09",
+      "name": "Biology",
+      "code": "09",
+      "aliases": []
+    },
+    {
+      "id": "10",
+      "name": "Combined Mathematics",
+      "code": "10",
+      "aliases": []
+    },
+    {
+      "id": "11",
+      "name": "Higher Mathematics",
+      "code": "11",
+      "aliases": []
+    },
+    {
+      "id": "12",
+      "name": "Common General Test",
+      "code": "12",
+      "aliases": []
+    },
+    {
+      "id": "13",
+      "name": "General English",
+      "code": "13",
+      "aliases": []
+    },
+    {
+      "id": "14",
+      "name": "Civil Technology",
+      "code": "14",
+      "aliases": []
+    },
+    {
+      "id": "15",
+      "name": "Mechanical Technology",
+      "code": "15",
+      "aliases": []
+    },
+    {
+      "id": "16",
+      "name": "Electrical, Electronic & Information Technology",
+      "code": "16",
+      "aliases": []
+    },
+    {
+      "id": "17",
+      "name": "Food Technology",
+      "code": "17",
+      "aliases": []
+    },
+    {
+      "id": "18",
+      "name": "Agro Technology",
+      "code": "18",
+      "aliases": []
+    },
+    {
+      "id": "19",
+      "name": "Bio Resource Technology",
+      "code": "19",
+      "aliases": [
+        "Bio-Resource Technology"
+      ]
+    },
+    {
+      "id": "20",
+      "name": "Information & Communication Technology",
+      "code": "20",
+      "aliases": [
+        "ICT",
+        "Information and Communication Technology"
+      ]
+    },
+    {
+      "id": "21",
+      "name": "Economics",
+      "code": "21",
+      "aliases": []
+    },
+    {
+      "id": "22",
+      "name": "Geography",
+      "code": "22",
+      "aliases": []
+    },
+    {
+      "id": "23",
+      "name": "Political Science",
+      "code": "23",
+      "aliases": []
+    },
+    {
+      "id": "24",
+      "name": "Logic & Scientific Method",
+      "code": "24",
+      "aliases": [
+        "Logic and Scientific Method"
+      ]
+    },
+    {
+      "id": "25A",
+      "name": "History of India",
+      "code": "25A",
+      "aliases": [
+        "History of Sri Lanka & India"
+      ]
+    },
+    {
+      "id": "25B",
+      "name": "History of Europe",
+      "code": "25B",
+      "aliases": [
+        "History of Sri Lanka & Europe"
+      ]
+    },
+    {
+      "id": "25C",
+      "name": "History of Modern World",
+      "code": "25C",
+      "aliases": [
+        "History of Sri Lanka & Modern World"
+      ]
+    },
+    {
+      "id": "28",
+      "name": "Home Economics",
+      "code": "28",
+      "aliases": []
+    },
+    {
+      "id": "29",
+      "name": "Communication & Media Studies",
+      "code": "29",
+      "aliases": []
+    },
+    {
+      "id": "31",
+      "name": "Business Statistics",
+      "code": "31",
+      "aliases": []
+    },
+    {
+      "id": "32",
+      "name": "Business Studies",
+      "code": "32",
+      "aliases": []
+    },
+    {
+      "id": "33",
+      "name": "Accounting",
+      "code": "33",
+      "aliases": []
+    },
+    {
+      "id": "41",
+      "name": "Buddhism",
+      "code": "41",
+      "aliases": []
+    },
+    {
+      "id": "42",
+      "name": "Hinduism",
+      "code": "42",
+      "aliases": []
+    },
+    {
+      "id": "43",
+      "name": "Christianity",
+      "code": "43",
+      "aliases": []
+    },
+    {
+      "id": "44",
+      "name": "Islam",
+      "code": "44",
+      "aliases": []
+    },
+    {
+      "id": "45",
+      "name": "Buddhist Civilization",
+      "code": "45",
+      "aliases": []
+    },
+    {
+      "id": "46",
+      "name": "Hindu Civilization",
+      "code": "46",
+      "aliases": []
+    },
+    {
+      "id": "47",
+      "name": "Islamic Civilization",
+      "code": "47",
+      "aliases": [
+        "Islam Civilization"
+      ]
+    },
+    {
+      "id": "48",
+      "name": "Greek & Roman Civilization",
+      "code": "48",
+      "aliases": []
+    },
+    {
+      "id": "49",
+      "name": "Christian Civilization",
+      "code": "49",
+      "aliases": []
+    },
+    {
+      "id": "51",
+      "name": "Art",
+      "code": "51",
+      "aliases": []
+    },
+    {
+      "id": "52",
+      "name": "Dancing (Indigenous)",
+      "code": "52",
+      "aliases": [
+        "Dancing (Sinhala)",
+        "Dancing (Oriental)"
+      ]
+    },
+    {
+      "id": "53",
+      "name": "Dancing (Bharatha)",
+      "code": "53",
+      "aliases": [
+        "Dancing (Bharata)"
+      ]
+    },
+    {
+      "id": "54",
+      "name": "Oriental Music",
+      "code": "54",
+      "aliases": []
+    },
+    {
+      "id": "55",
+      "name": "Carnatic Music",
+      "code": "55",
+      "aliases": []
+    },
+    {
+      "id": "56",
+      "name": "Western Music",
+      "code": "56",
+      "aliases": []
+    },
+    {
+      "id": "57",
+      "name": "Drama & Theatre (Sinhala)",
+      "code": "57",
+      "aliases": []
+    },
+    {
+      "id": "58",
+      "name": "Drama & Theatre (Tamil)",
+      "code": "58",
+      "aliases": []
+    },
+    {
+      "id": "59",
+      "name": "Drama & Theatre (English)",
+      "code": "59",
+      "aliases": []
+    },
+    {
+      "id": "65",
+      "name": "Engineering Technology",
+      "code": "65",
+      "aliases": []
+    },
+    {
+      "id": "66",
+      "name": "Bio Systems Technology",
+      "code": "66",
+      "aliases": [
+        "Biosystems Technology"
+      ]
+    },
+    {
+      "id": "67",
+      "name": "Science for Technology",
+      "code": "67",
+      "aliases": []
+    },
+    {
+      "id": "71",
+      "name": "Sinhala",
+      "code": "71",
+      "aliases": []
+    },
+    {
+      "id": "72",
+      "name": "Tamil",
+      "code": "72",
+      "aliases": []
+    },
+    {
+      "id": "73",
+      "name": "English",
+      "code": "73",
+      "aliases": []
+    },
+    {
+      "id": "74",
+      "name": "Pali",
+      "code": "74",
+      "aliases": []
+    },
+    {
+      "id": "75",
+      "name": "Sanskrit",
+      "code": "75",
+      "aliases": []
+    },
+    {
+      "id": "78",
+      "name": "Arabic",
+      "code": "78",
+      "aliases": []
+    },
+    {
+      "id": "79",
+      "name": "Malay",
+      "code": "79",
+      "aliases": []
+    },
+    {
+      "id": "81",
+      "name": "French",
+      "code": "81",
+      "aliases": []
+    },
+    {
+      "id": "82",
+      "name": "German",
+      "code": "82",
+      "aliases": []
+    },
+    {
+      "id": "83",
+      "name": "Russian",
+      "code": "83",
+      "aliases": []
+    },
+    {
+      "id": "84",
+      "name": "Hindi",
+      "code": "84",
+      "aliases": []
+    },
+    {
+      "id": "86",
+      "name": "Chinese",
+      "code": "86",
+      "aliases": []
+    },
+    {
+      "id": "87",
+      "name": "Japanese",
+      "code": "87",
+      "aliases": []
+    },
+    {
+      "id": "88",
+      "name": "Korean",
+      "code": "88",
+      "aliases": []
+    }
+  ]
+}
