@@ -100,3 +100,15 @@ class UIFlowTests(unittest.TestCase):
         bottom = self.app.winfo_rooty() + self.app.winfo_height()
         for button in (self.app.start_button, self.app.export_button, self.app.open_button):
             self.assertLessEqual(button.winfo_rooty() + button.winfo_height(), bottom)
+
+    def test_search_entry_updates_on_text_changes_and_keeps_selection(self):
+        self.app.search_entry.insert(0, '01'); self.app.update()
+        self.assertEqual(len(self.app.subject_widgets), 1)
+        self.assertIn('Physics', self.app.subject_widgets[0].cget('text'))
+        self.app.search_entry.delete(0, 'end')
+        self.app.search_entry.insert(0, 'communication technology'); self.app.update()
+        self.assertEqual(len(self.app.subject_widgets), 1)
+        self.assertIn('Communication Technology', self.app.subject_widgets[0].cget('text').replace('\n', ' '))
+        self.assertTrue(self.app.subject_vars['20'].get())
+        self.assertEqual(set(self.app.field_vars), {'Candidate Name', 'Index Number', 'District Rank',
+                                                   'Island Rank', 'Z-Score', 'Subject Stream'})

@@ -231,7 +231,8 @@ def parse_results(text: str, subject_ids: tuple[str, ...] | str,
         for label in (subject.name, *subject.aliases):
             aliases[normalize_subject_key(label)] = subject.id
     metadata_labels = {normalize_subject_key(field) for field in FIELDS}
-    metadata_labels.update({'NAME', 'SCHOOL NAME', 'STREAM', 'EXAMINATION', 'YEAR', 'NIC', 'NIC NUMBER'})
+    metadata_labels.update({'NAME', 'SCHOOL NAME', 'SCHOOL', 'DISTRICT', 'MEDIUM',
+                            'STREAM', 'EXAMINATION', 'YEAR', 'NIC', 'NIC NUMBER'})
     metadata_values = {i + 1 for i, line in enumerate(lines)
                        if normalize_subject_key(line.strip(' :-')) in metadata_labels}
     matches = []

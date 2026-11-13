@@ -2,6 +2,7 @@
 from dataclasses import dataclass
 from functools import lru_cache
 import json
+import re
 from pathlib import Path
 
 CATALOGUE_PATH = Path(__file__).parent / 'data' / 'subjects.json'
@@ -28,9 +29,14 @@ def load_subjects() -> tuple[Subject, ...]:
 
 def search_subjects(query: str) -> tuple[Subject, ...]:
     query = query.strip().casefold()
-    return tuple(s for s in load_subjects() if query in
-                 ' '.join((s.name, s.code or '', *s.aliases)).casefold())
+    if re.fullmatch(r'\d{1,2}[abc]?', query):
+        code = query.upper().zfill(2)
+        exact = tuple(s for s in load_subjects() if s.code == code)
+        return exact or tuple(s for s in load_subjects() if (s.code or '').startswith(code))
+    words = re.findall(r'[a-z0-9]+', query.replace('&', ' and '))
+    return tuple(s for s in load_subjects() if all(word in
+                 ' '.join((s.name, s.code or '', *s.aliases)).casefold() for word in words))
 
 
-FIELDS = ('Candidate Name', 'School', 'District', 'Medium', 'Index Number',
+FIELDS = ('Candidate Name', 'Index Number',
           'District Rank', 'Island Rank', 'Z-Score', 'Subject Stream')

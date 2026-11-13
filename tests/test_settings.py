@@ -7,6 +7,13 @@ from al_results.models import RunConfig
 
 
 class SettingsTests(unittest.TestCase):
+    def test_removed_fields_do_not_discard_supported_saved_selections(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'preferences.json'
+            path.write_text('{"fields": ["School", "District", "Medium", "District Rank", "Z-Score"]}')
+            with patch('al_results.settings.preferences_path', return_value=path):
+                self.assertEqual(load_preferences()['fields'], ['District Rank', 'Z-Score'])
+
     def test_preferences_roundtrip_and_corrupt_fallback(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / 'settings.json'

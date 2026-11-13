@@ -1,4 +1,4 @@
-#define AppVersion "0.2.0"
+#define AppVersion "0.2.1"
 [Setup]
 AppId={{FDC2638A-787B-4D1F-9945-E1D97B1B51F2}
 AppName=A/L Results Collector

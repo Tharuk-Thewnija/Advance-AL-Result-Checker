@@ -121,10 +121,13 @@ class ScraperApp(ctk.CTk):
         self.selection_label.grid(row=0, column=1)
         clear = self.button(subject_header, 'Clear', self.clear_subjects, width=54)
         clear.grid(row=0, column=2, padx=(10, 0)); self.settings_widgets.append(clear)
-        # CustomTkinter placeholders are not shown with textvariable attached.
-        search = ctk.CTkEntry(setup, placeholder_text='Search subjects, codes or ICT', height=34)
-        search.bind('<KeyRelease>', lambda _: self.search_var.set(search.get()))
-        search.grid(row=5, column=0, sticky='ew', padx=14, pady=(0, 8)); self.settings_widgets.append(search)
+        search_row = ctk.CTkFrame(setup, fg_color='transparent')
+        search_row.grid(row=5, column=0, sticky='ew', padx=14, pady=(0, 8))
+        search_row.grid_columnconfigure(0, weight=1)
+        self.label(search_row, 'Search by subject name or code', 12, muted=True).grid(row=0, column=0, sticky='w', pady=(0, 4))
+        self.search_entry = ctk.CTkEntry(search_row, textvariable=self.search_var, height=34)
+        self.search_entry.grid(row=1, column=0, sticky='ew')
+        self.settings_widgets.append(self.search_entry)
         self.subject_list = ctk.CTkScrollableFrame(setup, height=210, fg_color=BG, corner_radius=7)
         self.subject_list.grid(row=6, column=0, sticky='ew', padx=14)
         self.subject_list.grid_columnconfigure(0, weight=1)
@@ -204,6 +207,7 @@ class ScraperApp(ctk.CTk):
             self.subject_widgets.append(widget)
         if not self.subject_widgets:
             self.label(self.subject_list, 'No matching subjects.', muted=True).grid(row=0, column=0, pady=14)
+        self.subject_list._parent_canvas.yview_moveto(0)
         self.update_selection_count()
 
     def update_selection_count(self):
