@@ -201,7 +201,7 @@ def find_subject_grade(lines: list[str], subject_name: str) -> str | None:
     return None
 
 
-def parse_results(text: str, subject_name: str) -> dict[str, str | None]:
+def parse_legacy_results(text: str, subject_name: str) -> dict[str, str | None]:
     lines = normalize_lines(text)
 
     return {
@@ -217,5 +217,48 @@ def parse_results(text: str, subject_name: str) -> dict[str, str | None]:
         "Selected Subject Result": find_subject_grade(lines, subject_name),
         "Raw Results Block": text.strip(),
     }
+
+
+def parse_results(text: str, subject_ids: tuple[str, ...] | str,
+                  fields: tuple[str, ...] = ()) -> dict[str, str | None]:
+    # Temporary compatibility for the original window during extraction.
+    if isinstance(subject_ids, str):
+        return parse_legacy_results(text, subject_ids)
+    from .subjects import load_subjects, FIELDS
+    subjects = {s.id: s for s in load_subjects()}
+    if set(subject_ids) - subjects.keys() or set(fields) - set(FIELDS):
+        raise ValueError('Unknown subject or output field')
+    lines = normalize_lines(text)
+    aliases = {}
+    for subject in subjects.values():
+        for label in (subject.name, *subject.aliases):
+            aliases[normalize_subject_key(label)] = subject.id
+    matches = []
+    found = {}
+    grade_pattern = re.compile(r'^(?:A|B|C|S|F|W|AB|ABS|ABSENT|WITHHELD|\d{1,3})$', re.I)
+    for index, line in enumerate(lines):
+        # Accept a leading official code without allowing substring matches.
+        clean = re.sub(r'^\(?\d{1,2}[ABC]?\)?[.\s:-]+', '', line)
+        subject_id = aliases.get(normalize_subject_key(clean))
+        if subject_id:
+            matches.append((index, subject_id))
+            if index + 1 < len(lines) and grade_pattern.fullmatch(lines[index + 1]):
+                found[subject_id] = lines[index + 1]
+            continue
+        parts = clean.rsplit(' ', 1)
+        if len(parts) == 2 and grade_pattern.fullmatch(parts[1]):
+            subject_id = aliases.get(normalize_subject_key(parts[0]))
+            if subject_id:
+                found[subject_id] = parts[1]
+    # Some cards render all subject labels followed by all grades.
+    if len(matches) > 1 and all(b[0] == a[0] + 1 for a, b in zip(matches, matches[1:])):
+        grades = lines[matches[-1][0] + 1:matches[-1][0] + 1 + len(matches)]
+        if len(grades) == len(matches) and all(grade_pattern.fullmatch(g) for g in grades):
+            found.update((subject_id, grade) for (_, subject_id), grade in zip(matches, grades))
+    result = {f'subject:{sid}': found.get(sid) for sid in subject_ids}
+    labels = {'Candidate Name': ('Candidate Name', 'Name'), 'School': ('School Name', 'School'),
+              'Z-Score': ('Z-Score', 'Z Score'), 'Subject Stream': ('Subject Stream', 'Stream')}
+    result.update({field: find_labeled_value(lines, *labels.get(field, (field,))) for field in fields})
+    return result
 
 
