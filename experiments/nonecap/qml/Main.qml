@@ -101,7 +101,7 @@ ApplicationWindow {
                                         Layout.preferredWidth: 145
                                     }
                                 }
-                                Hint { text: "Manual is free. Automatic uses your NoneCAP account when you start collection."; Layout.fillWidth: true }
+                                Hint { text: "Manual is free. Automatic uses your NoneCAP account to supply a token; the checkbox may stay unticked."; Layout.fillWidth: true }
                                 ColumnLayout {
                                     visible: bridge.captchaMode === "Automatic"; Layout.fillWidth: true; spacing: 8
                                     Hint { text: "API key · kept in memory for this window only" }
@@ -267,7 +267,7 @@ ApplicationWindow {
                                 Layout.fillWidth: true; implicitHeight: 34; radius: 12; color: t.surface; border.color: t.line
                                 Hint { anchors.fill: parent; anchors.margins: 10; text: bridge.currentStudent; elide: Text.ElideRight; wrapMode: Text.NoWrap }
                             }
-                            Hint { text: bridge.captchaMode === "Automatic" ? "Automatic mode: one request per student, within session limits. On failure, complete CAPTCHA manually in Chrome. Progress is saved after each row." : "Complete CAPTCHA and submit in Chrome for each student. Progress is saved after every row."; color: t.dim; Layout.fillWidth: true; font.pixelSize: 11 }
+                            Hint { text: bridge.captchaMode === "Automatic" ? "Leave CAPTCHA untouched while the automatic solve runs. Complete it manually only when prompted. Watch the activity feed for token delivery, submission and results." : "Complete CAPTCHA and submit in Chrome for each student. Progress is saved after every row."; color: t.dim; Layout.fillWidth: true; font.pixelSize: 11 }
                         }
                     }
                     Card {

@@ -99,6 +99,12 @@ class BrowserTests(unittest.TestCase):
                     self.assertEqual(len(manual), 2)
                 else:
                     self.assertEqual((client.creates, budget.spent), (2, 4))
+                    logs = '\n'.join(event.payload['text'] for event in events if event.kind == 'log')
+                    self.assertIn('NoneCAP token received. Reported charge: 2 credits.', logs)
+                    self.assertIn('Session: 2/3 credits; attempts: 1/3.', logs)
+                    self.assertIn('Token delivered through the site CAPTCHA callback.', logs)
+                    self.assertIn('Automatic form submission triggered.', logs)
+                    self.assertIn('Results received after automatic submission.', logs)
             finally:
                 try: driver.quit()
                 except Exception: pass

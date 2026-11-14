@@ -26,6 +26,14 @@ The title/footer say **NONECAP PROTOTYPE**. Normal `run.cmd` opens the released 
 5. Start collection. Automatic mode can spend credits. Complete CAPTCHA manually
    in Chrome on fallback. Stop, resume and export use the existing workflow.
 
+Automatic mode delivers a token to the page; it does not click or visually tick
+the CAPTCHA checkbox. Leave the checkbox untouched while the automatic attempt
+runs, and intervene only when prompted for manual entry. The activity feed records
+the reported charge, session usage, token callback delivery, submission and result
+receipt. If the page already held a CAPTCHA response before token delivery, the
+log flags possible overlapping browser verification. A token receipt or charge
+alone does not establish that the examination site accepted it.
+
 The key is masked and held in memory only. It is not saved to preferences,
 checkpoints, logs or command-line arguments. Close the window or use **Clear key**
 to remove it from the app. Each launch defaults to Manual with an empty key.
