@@ -6,6 +6,11 @@ class LimitReached(Exception):
     pass
 
 
+class ChargeUnconfirmed(LimitReached):
+    """Accounting is incomplete; increasing the local limit does not resolve it."""
+    pass
+
+
 class Budget:
     def __init__(self, credit_limit=10, max_attempts=3):
         self.lock = threading.RLock()
@@ -24,7 +29,7 @@ class Budget:
 
     def check(self):
         with self.lock:
-            if self.blocked: raise LimitReached('Charge could not be confirmed. Automatic mode is paused for this session.')
+            if self.blocked: raise ChargeUnconfirmed('Charge could not be confirmed. Automatic mode is paused for this session.')
             if self.spent >= self.credit_limit: raise LimitReached('Session credit threshold reached.')
             if self.attempts >= self.max_attempts: raise LimitReached('Session automatic-attempt limit reached.')
 
@@ -36,7 +41,7 @@ class Budget:
         with self.lock:
             if job in self.receipts: return
             if type(credits) is not int or credits < 0:
-                self.uncertain(); raise LimitReached('NoneCAP did not confirm the charge. Automatic mode is paused.')
+                self.uncertain(); raise ChargeUnconfirmed('NoneCAP did not confirm the charge. Automatic mode is paused.')
             self.receipts.add(job); self.spent += credits
 
     def uncertain(self):

@@ -9,7 +9,7 @@ from selenium.common.exceptions import TimeoutException, JavascriptException
 
 from al_results import collector as production
 from al_results.models import WorkerEvent
-from .budget import LimitReached
+from .budget import LimitReached, ChargeUnconfirmed
 from .client import ServiceError
 from .solver import Interrupted
 from .solver import Solver
@@ -51,13 +51,16 @@ class PrototypeCollector:
         self.worker_skips = [threading.Event(),threading.Event()]
         self.pause = threading.Event()
         self.pause_reason = ''
+        self.pause_kind = 'automatic_limit'
         self.pause_lock = threading.Lock()
         self.run_stop = None
 
     def pause_at_limit(self, reason, emit):
         with self.pause_lock:
-            if not self.pause.is_set():
+            kind = 'billing_unconfirmed' if isinstance(reason,ChargeUnconfirmed) else 'automatic_limit'
+            if not self.pause.is_set() or (kind=='billing_unconfirmed' and self.pause_kind!='billing_unconfirmed'):
                 self.pause_reason = str(reason)
+                self.pause_kind = kind
                 self.pause.set()
                 emit(WorkerEvent('log',{'text':str(reason)+' Automatic collection paused. Pending rows are kept; no manual timeout is started.'}))
 
@@ -181,7 +184,7 @@ class PrototypeCollector:
     def __call__(self, config, workbook, store, emit, stop, skip):
         if self.solver is None:
             return production.collect(config, workbook, store, emit, stop, skip)
-        self.pause.clear(); self.pause_reason = ''
+        self.pause.clear(); self.pause_reason = ''; self.pause_kind = 'automatic_limit'
         self.run_stop = stop
         core = private_core()
         if self.workers == 2:
@@ -193,7 +196,7 @@ class PrototypeCollector:
                 solver = Solver(self.solver.client,self.solver.budget,notify)
                 return self.session_type(core,solver,emit,f'Worker {number}')()
             metrics = collect_parallel(config,workbook,store,emit,stop,self.worker_skips,factory,core,
-                                       self.pause,lambda:self.pause_reason,2)
+                                       self.pause,lambda:self.pause_reason,2,pause_kind=lambda:self.pause_kind)
         else:
             started = time.perf_counter()
             rows = 0
@@ -206,7 +209,7 @@ class PrototypeCollector:
                 nonlocal rows,terminal_event
                 if event.kind == 'progress': rows = event.payload['processed']-previously_saved
                 if event.kind == 'stopped' and self.pause.is_set():
-                    event = WorkerEvent('stopped',dict(event.payload,reason='automatic_limit',error=self.pause_reason))
+                    event = WorkerEvent('stopped',dict(event.payload,reason=self.pause_kind,error=self.pause_reason))
                 if event.kind in ('finished','stopped','fatal'):
                     terminal_event=event
                     return

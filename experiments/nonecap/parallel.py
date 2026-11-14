@@ -11,7 +11,7 @@ from al_results.parsing import parse_results
 
 
 def collect_parallel(config, workbook, store, emit, stop, skips, session_factory, core,
-                     pause, pause_reason, workers=2):
+                     pause, pause_reason, workers=2, *, pause_kind=None):
     started = time.perf_counter()
     terminal, reason, error = 'finished', '', ''
     counts = dict(total=len(workbook.frame), processed=0, completed=0, skipped=0, failed=0)
@@ -94,7 +94,7 @@ def collect_parallel(config, workbook, store, emit, stop, skips, session_factory
                     emit(WorkerEvent('log',{'text':f'Worker {number}, row {result.position+1}: {result.status} ({elapsed:.1f}s)'}))
             for future in futures: future.result()
         if terminal != 'fatal' and not reason:
-            if pause.is_set(): terminal,reason,error = 'stopped','automatic_limit',pause_reason()
+            if pause.is_set(): terminal,reason,error = 'stopped',pause_kind() if pause_kind else 'automatic_limit',pause_reason()
             elif stop.is_set(): terminal = 'stopped'
     except Exception as exc:
         stop.set(); terminal,reason,error = 'fatal','',str(exc)

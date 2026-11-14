@@ -11,6 +11,7 @@ from PySide6.QtQml import QQmlExpression
 
 from experiments.nonecap.__main__ import configure_storage, load_ui
 from experiments.nonecap.backend import PrototypeBridge
+from al_results.models import WorkerEvent
 
 KEY = 'nc_live_' + 'x' * 32
 
@@ -100,3 +101,17 @@ class BridgeTests(unittest.TestCase):
         self.assertFalse(self.bridge._collector.worker_skips[0].is_set())
         self.assertTrue(self.bridge._collector.worker_skips[1].is_set())
         self.bridge._phase='idle'
+
+    def test_unknown_billing_is_not_labelled_as_a_spending_limit(self):
+        self.bridge._handle(WorkerEvent('stopped',{'reason':'billing_unconfirmed','error':'Final charge missing.'}))
+        self.assertIn('charge cannot be confirmed',self.bridge.status)
+        self.assertNotIn('session limit',self.bridge.status)
+        self.assertNotIn('Adjust limits',self.bridge.status)
+
+    def test_raising_limits_does_not_clear_unknown_billing(self):
+        self.bridge.apiKey=KEY; self.bridge.captchaMode='Automatic'
+        self.bridge.budget.uncertain(); self.bridge.creditLimit='1000'
+        with patch.object(self.bridge,'_launch') as launch:
+            self.bridge.startCollection()
+            launch.assert_not_called()
+        self.assertIn('increasing limits will not clear',self.bridge.status)

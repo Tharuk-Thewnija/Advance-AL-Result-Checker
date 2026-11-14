@@ -3,7 +3,7 @@ from PySide6.QtCore import Property, Signal, Slot, Qt
 
 from al_results.models import WorkerEvent
 from qt_app.backend import Bridge
-from .budget import Budget, LimitReached
+from .budget import Budget, LimitReached, ChargeUnconfirmed
 from .client import Client, ServiceError
 from .collector import PrototypeCollector
 from .solver import Solver
@@ -115,6 +115,10 @@ class PrototypeBridge(Bridge):
             if event.kind=='stopped' and event.payload.get('reason')=='automatic_limit':
                 self._status='Automatic collection paused at the session limit. Pending rows are kept. Adjust limits or select Manual before starting again.'
                 self.log(self._status)
+            elif event.kind=='stopped' and event.payload.get('reason')=='billing_unconfirmed':
+                self._status='Automatic collection paused because a final charge cannot be confirmed. Pending rows are kept. Check NoneCAP history or select Manual; raising limits will not clear this billing pause.'
+                self._auto_status=self._status
+                self.captchaChanged.emit(); self.log(self._status)
 
     @Slot()
     def startCollection(self):
@@ -135,6 +139,10 @@ class PrototypeBridge(Bridge):
             else:
                 self._collector.solver = None
                 self._auto_status = 'Manual mode: solve CAPTCHA in Chrome. No automatic requests.'
+        except ChargeUnconfirmed as exc:
+            self._status=str(exc)+' No automatic request was made. Check NoneCAP history or select Manual; increasing limits will not clear this pause.'
+            self._auto_status=self._status; self.log(self._status)
+            self.stateChanged.emit(); self.captchaChanged.emit(); return
         except LimitReached as exc:
             self._status=str(exc)+' No automatic request was made. Session counters are retained; adjust limits or select Manual.'
             self._auto_status=self._status; self.log(self._status)

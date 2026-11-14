@@ -84,6 +84,14 @@ further automatic requests for this window. Check the provider dashboard before
 restarting after an uncertain request; closing the app does not prove an unknown
 server-side job was cancelled. The displayed balance is the last checked balance.
 
+If a terminal job's final charge is absent or invalid, the app reads the same job
+once more. This is a receipt lookup, not a paid solve retry. A valid refreshed
+receipt allows the existing token to continue. If its charge remains unclear,
+the app pauses with a **billing-unconfirmed** warning and leaves the student
+pending. Other already admitted jobs can finish. A billing pause is separate from
+an exhausted session limit; increasing local limits does not clear it. The log
+reports the terminal status when available, without exposing tokens or API keys.
+
 ## Isolation and data
 
 The launcher changes `LOCALAPPDATA` inside its own process only. Preferences,

@@ -2,7 +2,7 @@
 import re
 import time
 
-from .budget import LimitReached
+from .budget import LimitReached, ChargeUnconfirmed
 from .client import ServiceError
 
 
@@ -28,13 +28,29 @@ class Solver:
             raise Interrupted('skip')
 
     def receipt(self, job, reply):
-        if reply.get('id') != job or reply.get('status') not in ('solved', 'failed', 'expired', 'cancelled'):
+        terminal_states = ('solved', 'failed', 'expired', 'cancelled')
+        if reply.get('id') != job or reply.get('status') not in terminal_states:
             self.budget.uncertain()
-            raise LimitReached('The final charge could not be confirmed. Automatic mode is disabled.')
+            raise ChargeUnconfirmed('The final charge could not be confirmed. Automatic mode is paused.')
+        credits = reply.get('credits_charged')
+        if type(credits) is not int or credits < 0:
+            # Read the SAME job once; never create another paid solve to repair
+            # a receipt that arrived before its charge was populated.
+            try:
+                fresh = self.client.get(job)
+            except ServiceError:
+                fresh = None
+            if isinstance(fresh,dict) and fresh.get('id')==job and fresh.get('status') in terminal_states:
+                reply = fresh
+                credits = reply.get('credits_charged')
+            if type(credits) is not int or credits < 0:
+                self.budget.uncertain()
+                raise ChargeUnconfirmed(f"NoneCAP reported {reply['status']}, but its final charge could not be confirmed after rechecking the same job. Automatic collection is paused.")
         # Missing costs are never treated as free, even on failed jobs.
-        self.budget.settle(job, reply.get('credits_charged'))
-        self.last_charge = reply['credits_charged']
+        self.budget.settle(job, credits)
+        self.last_charge = credits
         self.update()
+        return reply
 
     def cancel(self, job):
         try:
@@ -72,7 +88,7 @@ class Solver:
                 self.controls(stop, skip)
                 if reply.get('status') in ('solved', 'failed', 'expired', 'cancelled'):
                     terminal = True
-                    self.receipt(job, reply)
+                    reply = self.receipt(job, reply)
                     token = reply.get('token')
                     if reply['status'] != 'solved' or not isinstance(token, str) or not 0 < len(token) <= 65536:
                         raise ServiceError('solve_failed')

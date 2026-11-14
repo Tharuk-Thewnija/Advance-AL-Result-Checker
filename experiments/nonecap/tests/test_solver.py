@@ -1,6 +1,6 @@
 import threading
 import unittest
-from experiments.nonecap.budget import Budget, LimitReached
+from experiments.nonecap.budget import Budget, LimitReached, ChargeUnconfirmed
 from experiments.nonecap.client import ServiceError
 from experiments.nonecap.solver import Solver, Interrupted
 
@@ -66,6 +66,27 @@ class SolverTests(unittest.TestCase):
         self.client.response.pop('credits_charged')
         with self.assertRaises(LimitReached): self.solve()
         self.assertTrue(self.budget.blocked)
+
+    def test_missing_charge_rechecks_existing_job_without_another_paid_solve(self):
+        self.client.response['credits_charged']=None
+        reads=[]
+        def receipt(job):
+            reads.append(job)
+            return dict(self.client.response,credits_charged=2)
+        self.client.get=receipt
+        self.assertEqual(self.solve(),'fake-token')
+        self.assertEqual((self.client.creates,len(reads),self.budget.spent),(1,1,2))
+        self.assertFalse(self.budget.blocked)
+
+    def test_unconfirmed_charge_is_distinct_from_exhausted_limit(self):
+        self.client.response['credits_charged']=None
+        reads=[]
+        def missing(job): reads.append(job); return dict(self.client.response)
+        self.client.get=missing
+        with self.assertRaises(ChargeUnconfirmed) as error: self.solve()
+        self.assertIn('solved',str(error.exception))
+        self.assertEqual(len(reads),1)
+        with self.assertRaises(ChargeUnconfirmed): self.budget.check()
 
     def test_ambiguous_post_failure_is_never_retried(self):
         def fail(*args, **kwargs):

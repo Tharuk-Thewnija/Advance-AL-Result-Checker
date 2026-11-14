@@ -14,7 +14,7 @@ from al_results import collector as core
 from al_results.checkpoints import CheckpointStore
 from al_results.models import InputWorkbook, RunConfig
 from experiments.nonecap.parallel import collect_parallel
-from experiments.nonecap.budget import Budget, LimitReached
+from experiments.nonecap.budget import Budget, LimitReached, ChargeUnconfirmed
 from experiments.nonecap.collector import PrototypeCollector, DRIVER_STARTUP_LOCK
 from experiments.nonecap.solver import Solver, Interrupted
 from tests.test_parsing import CARD
@@ -233,3 +233,10 @@ class ParallelTests(unittest.TestCase):
         self.run_collection(factory)
         self.assertEqual(self.events[-1].kind,'stopped')
         self.assertEqual(self.events[-1].payload['processed'],0)
+
+    def test_billing_uncertainty_takes_priority_over_a_simultaneous_session_limit(self):
+        adapter=PrototypeCollector(lambda data:None)
+        adapter.pause_at_limit(LimitReached('Attempt limit reached.'),self.events.append)
+        adapter.pause_at_limit(ChargeUnconfirmed('Final charge missing.'),self.events.append)
+        self.assertEqual(adapter.pause_kind,'billing_unconfirmed')
+        self.assertEqual(adapter.pause_reason,'Final charge missing.')
