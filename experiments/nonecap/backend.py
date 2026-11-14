@@ -1,0 +1,114 @@
+"""Session-only NoneCAP settings around the unchanged production Qt bridge."""
+from PySide6.QtCore import Property, Signal, Slot, Qt
+
+from al_results.models import WorkerEvent
+from qt_app.backend import Bridge
+from .budget import Budget
+from .client import Client, ServiceError
+from .collector import PrototypeCollector
+from .solver import Solver
+
+
+class PrototypeBridge(Bridge):
+    captchaChanged = Signal()
+    creditUpdate = Signal(dict)
+
+    def __init__(self, *, client_factory=Client):
+        self._mode, self._api_key = 'Manual', ''
+        self._credit_limit, self._max_attempts = '10', '3'
+        self._balance = 'Balance not checked'
+        self._auto_status = 'Manual mode: solve CAPTCHA in Chrome. No automatic requests.'
+        self.budget = Budget()
+        self.client_factory = client_factory
+        super().__init__()
+        self._collector = PrototypeCollector(self.creditUpdate.emit)
+        self.creditUpdate.connect(self._credit_update, Qt.ConnectionType.QueuedConnection)
+        self._logs.clear()
+        self.log('NONECAP PROTOTYPE — separate saved progress. API key is kept only in this window.')
+
+    def _session_setting(name, notify):
+        def get(self): return getattr(self, name)
+        def set(self, value):
+            if not self.running:
+                if name == '_mode' and value not in ('Manual', 'Automatic'): return
+                setattr(self, name, value)
+                if name == '_api_key':
+                    # Drop the old client's reference too when clearing/changing a key.
+                    self._collector.solver = None
+                    self._balance = 'Balance not checked'
+                if name == '_mode':
+                    if value == 'Manual': self._collector.solver = None
+                    self._auto_status = ('Manual mode: solve CAPTCHA in Chrome. No automatic requests.' if value == 'Manual' else
+                        'Automatic mode is disabled for this window; collection will continue manually.' if self._collector.disabled else
+                        'Automatic mode selected. Start may spend NoneCAP credits.')
+                self.captchaChanged.emit()
+        return Property(str, get, set, notify=notify)
+
+    captchaMode = _session_setting('_mode', captchaChanged)
+    apiKey = _session_setting('_api_key', captchaChanged)
+    creditLimit = _session_setting('_credit_limit', captchaChanged)
+    maxAttempts = _session_setting('_max_attempts', captchaChanged)
+    balanceText = Property(str, lambda self: self._balance, notify=captchaChanged)
+    autoStatus = Property(str, lambda self: self._auto_status, notify=captchaChanged)
+    usageText = Property(str, lambda self: (
+        f"This window: {self.budget.snapshot()['spent']} credits reported · "
+        f"{self.budget.snapshot()['attempts']} automatic attempts" +
+        (' · charge unconfirmed' if self.budget.snapshot()['blocked'] else '')), notify=captchaChanged)
+
+    @Slot(dict)
+    def _credit_update(self, data):
+        if 'balance' in data:
+            self._balance = f"Last checked: {data['balance']} credits · daily allowance left: {data['plan_remaining']}"
+        if data.get('status'):
+            self._auto_status = data['status']
+            if self.collecting:
+                self._status = self._auto_status
+                self.stateChanged.emit()
+        self.captchaChanged.emit()
+
+    @Slot()
+    def checkBalance(self):
+        if self.running or self._closing: return
+        try:
+            client = self.client_factory(self._api_key)
+        except ServiceError as exc:
+            self._auto_status = str(exc); self.captchaChanged.emit(); return
+
+        def check():
+            try:
+                return WorkerEvent('nonecap_balance', client.balance())
+            except ServiceError as exc:
+                return WorkerEvent('nonecap_error', {'message': str(exc)})
+        self._launch('checking', 'Checking NoneCAP balance (no solve)…', check)
+
+    def _handle(self, event):
+        if event.kind == 'nonecap_balance':
+            self._credit_update(event.payload)
+            self._status = 'Balance checked. No solve was requested.'
+        elif event.kind == 'nonecap_error':
+            self._auto_status = event.payload['message']
+            self._status = self._auto_status
+            self.captchaChanged.emit()
+        else:
+            super()._handle(event)
+
+    @Slot()
+    def startCollection(self):
+        if self.running or self._closing: return
+        try:
+            if self._mode == 'Automatic':
+                try:
+                    self.budget.configure(int(self._credit_limit), int(self._max_attempts))
+                except ValueError:
+                    raise ValueError('Enter whole numbers: credit threshold 1–100,000 and attempts 1–1,000.') from None
+                client = self.client_factory(self._api_key)
+                self._collector.solver = Solver(client, self.budget, self.creditUpdate.emit)
+                self._auto_status = ('Automatic mode is disabled for this window; collection will continue manually.'
+                                     if self._collector.disabled else 'Automatic mode selected. Start may spend NoneCAP credits.')
+            else:
+                self._collector.solver = None
+                self._auto_status = 'Manual mode: solve CAPTCHA in Chrome. No automatic requests.'
+        except (ServiceError, ValueError) as exc:
+            self._status = str(exc); self.stateChanged.emit(); return
+        self.captchaChanged.emit()
+        super().startCollection()
