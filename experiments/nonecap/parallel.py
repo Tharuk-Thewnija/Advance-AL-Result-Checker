@@ -9,6 +9,8 @@ from al_results.excel_io import validate_rows
 from al_results.models import RowResult, WorkerEvent
 from al_results.parsing import parse_results
 
+MAX_WORKERS = 5
+
 
 def collect_parallel(config, workbook, store, emit, stop, skips, session_factory, core,
                      pause, pause_reason, workers=2, *, pause_kind=None):
@@ -62,6 +64,8 @@ def collect_parallel(config, workbook, store, emit, stop, skips, session_factory
             outputs.put(('done',number))
 
     try:
+        if type(workers) is not int or not 1 <= workers <= MAX_WORKERS or len(skips)<workers:
+            raise ValueError(f'Choose between 1 and {MAX_WORKERS} workers with a skip control for each.')
         for result in store.results():
             counts['processed'] += 1; counts[keys[result.status]] += 1
         pending = set(store.pending_positions())

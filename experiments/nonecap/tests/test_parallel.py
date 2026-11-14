@@ -6,6 +6,7 @@ import threading
 import time
 import unittest
 from types import SimpleNamespace
+from dataclasses import replace
 from unittest.mock import patch
 
 import pandas as pd
@@ -29,7 +30,7 @@ class ParallelTests(unittest.TestCase):
         self.book = InputWorkbook(self.root/'fictional.xlsx', 'local-only', 'Sheet1',
                                   pd.DataFrame({'NIC':['200000000001','200000000002','200000000003','200000000004']}))
         self.config = RunConfig(self.book.path, ('20',), (), '2025', 5, self.root)
-        self.stop = threading.Event(); self.skips = [threading.Event(), threading.Event()]
+        self.stop = threading.Event(); self.skips = [threading.Event() for _ in range(5)]
         self.events = []; self.pause = threading.Event(); self.reason = ''
         self.active = self.peak = self.closed = self.created = 0
         self.lock = threading.Lock()
@@ -51,10 +52,10 @@ class ParallelTests(unittest.TestCase):
                 with owner.lock: owner.closed += 1
         return Session()
 
-    def run_collection(self, factory=None):
+    def run_collection(self, factory=None, workers=2):
         collect_parallel(self.config, self.book, CheckpointStore.open(self.book,self.config),
                          self.events.append,self.stop,self.skips,factory or self.factory,core,
-                         self.pause,lambda:self.reason,2)
+                         self.pause,lambda:self.reason,workers)
 
     def test_two_workers_overlap_and_single_writer_saves_each_row_once(self):
         self.run_collection()
@@ -174,9 +175,11 @@ class ParallelTests(unittest.TestCase):
         self.assertFalse(manual)
         self.assertTrue(adapter.pause.is_set())
 
-    def test_stop_cancels_two_pending_paid_jobs_before_workers_finish(self):
-        barrier=threading.Barrier(2)
-        budget=Budget(100,2)
+    def pending_jobs_stop(self, workers):
+        if workers>len(self.book.frame):
+            self.book=replace(self.book,frame=pd.DataFrame({'NIC':[str(200000000001+i) for i in range(workers)]}))
+        barrier=threading.Barrier(workers)
+        budget=Budget(100,workers)
         lock=threading.Lock()
         creates=[]; cancels=[]
         owner=self
@@ -201,13 +204,16 @@ class ParallelTests(unittest.TestCase):
                 return CARD
             session.fetch=fetch
             return session
-        self.run_collection(factory)
+        self.run_collection(factory,workers=workers)
         self.assertEqual(sorted(cancels),sorted(creates))
-        self.assertEqual(len(cancels),2)
-        self.assertEqual((budget.attempts,budget.spent),(2,0))
-        self.assertEqual(self.closed,2)
+        self.assertEqual(len(cancels),workers)
+        self.assertEqual((budget.attempts,budget.spent),(workers,0))
+        self.assertEqual(self.closed,workers)
         self.assertEqual(self.events[-1].kind,'stopped')
         self.assertEqual(self.events[-1].payload['processed'],0)
+
+    def test_stop_cancels_two_pending_paid_jobs_before_workers_finish(self): self.pending_jobs_stop(2)
+    def test_stop_cancels_five_pending_paid_jobs_before_workers_finish(self): self.pending_jobs_stop(5)
 
     def test_stop_while_waiting_for_browser_startup_lock_does_not_open_browser(self):
         adapter=PrototypeCollector(lambda data:None); adapter.run_stop=self.stop
@@ -240,3 +246,34 @@ class ParallelTests(unittest.TestCase):
         adapter.pause_at_limit(ChargeUnconfirmed('Final charge missing.'),self.events.append)
         self.assertEqual(adapter.pause_kind,'billing_unconfirmed')
         self.assertEqual(adapter.pause_reason,'Final charge missing.')
+
+    def test_three_through_five_workers_save_in_original_row_order(self):
+        self.book=replace(self.book,frame=pd.DataFrame({'NIC':[str(200000000001+i) for i in range(10)]}))
+        for workers in (3,4,5):
+            with self.subTest(workers=workers),patch.dict(os.environ,{'LOCALAPPDATA':str(self.root/str(workers))}):
+                self.active=self.peak=self.closed=self.created=0; self.events=[]
+                self.run_collection(workers=workers)
+                self.assertEqual(self.peak,workers)
+                self.assertEqual(self.closed,workers)
+                self.assertEqual(self.events[-1].payload['completed'],10)
+                store=CheckpointStore.open(self.book,self.config)
+                try: self.assertEqual([r.position for r in store.results()],list(range(10)))
+                finally: store.close()
+
+    def test_five_workers_share_one_attempt_limit(self):
+        budget=Budget(100,2)
+        self.book=replace(self.book,frame=pd.DataFrame({'NIC':[str(200000000001+i) for i in range(10)]}))
+        def factory(worker):
+            session=self.factory(worker)
+            def fetch(*args):
+                try: budget.reserve()
+                except LimitReached as exc:
+                    self.reason=str(exc); self.pause.set(); raise core.StopRequested()
+                time.sleep(.05); budget.settle(f'solve_worker{worker}',12)
+                return CARD
+            session.fetch=fetch
+            return session
+        self.run_collection(factory,workers=5)
+        self.assertEqual((budget.attempts,budget.spent),(2,24))
+        self.assertEqual(self.events[-1].payload['completed'],2)
+        self.assertEqual(self.events[-1].payload['reason'],'automatic_limit')

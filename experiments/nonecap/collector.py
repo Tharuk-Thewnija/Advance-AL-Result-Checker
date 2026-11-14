@@ -13,7 +13,7 @@ from .budget import LimitReached, ChargeUnconfirmed
 from .client import ServiceError
 from .solver import Interrupted
 from .solver import Solver
-from .parallel import collect_parallel
+from .parallel import collect_parallel, MAX_WORKERS
 
 HERE = Path(__file__).parent
 DRIVER_STARTUP_LOCK = threading.Lock()
@@ -48,7 +48,7 @@ class PrototypeCollector:
         self.solver = None
         self.disabled = False
         self.workers = 1
-        self.worker_skips = [threading.Event(),threading.Event()]
+        self.worker_skips = [threading.Event() for _ in range(MAX_WORKERS)]
         self.pause = threading.Event()
         self.pause_reason = ''
         self.pause_kind = 'automatic_limit'
@@ -184,10 +184,13 @@ class PrototypeCollector:
     def __call__(self, config, workbook, store, emit, stop, skip):
         if self.solver is None:
             return production.collect(config, workbook, store, emit, stop, skip)
+        if type(self.workers) is not int or not 1<=self.workers<=MAX_WORKERS:
+            store.close()
+            raise ValueError(f'Choose between 1 and {MAX_WORKERS} workers.')
         self.pause.clear(); self.pause_reason = ''; self.pause_kind = 'automatic_limit'
         self.run_stop = stop
         core = private_core()
-        if self.workers == 2:
+        if self.workers > 1:
             for event in self.worker_skips: event.clear()
             def factory(number):
                 def notify(data):
@@ -196,7 +199,7 @@ class PrototypeCollector:
                 solver = Solver(self.solver.client,self.solver.budget,notify)
                 return self.session_type(core,solver,emit,f'Worker {number}')()
             metrics = collect_parallel(config,workbook,store,emit,stop,self.worker_skips,factory,core,
-                                       self.pause,lambda:self.pause_reason,2,pause_kind=lambda:self.pause_kind)
+                                       self.pause,lambda:self.pause_reason,self.workers,pause_kind=lambda:self.pause_kind)
         else:
             started = time.perf_counter()
             rows = 0

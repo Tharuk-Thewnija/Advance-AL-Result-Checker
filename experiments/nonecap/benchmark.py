@@ -12,7 +12,7 @@ import pandas as pd
 from al_results.checkpoints import CheckpointStore
 from al_results.models import InputWorkbook, RunConfig
 from .budget import Budget
-from .collector import PrototypeCollector
+from .collector import PrototypeCollector, MAX_WORKERS
 from .solver import Solver, Interrupted
 
 CARD = 'Name\nFICTIONAL BENCHMARK STUDENT\nINFORMATION & COMMUNICATION TECHNOLOGY\nA'
@@ -37,7 +37,7 @@ class SimulatedClient:
             with self.lock: self.active -= 1
 
 
-def run(report, *, rows=12, delay=.25):
+def run(report, *, rows=20, delay=.25):
     comparisons, outputs = [], []
     original = os.environ.get('LOCALAPPDATA')
     try:
@@ -46,7 +46,7 @@ def run(report, *, rows=12, delay=.25):
             frame = pd.DataFrame({'NIC':[str(200000000001+i) for i in range(rows)]})
             book = InputWorkbook(root/'fictional.xlsx','mock-only','Sheet1',frame)
             config = RunConfig(book.path,('20',),('Candidate Name',),'2025',180,root)
-            for workers in (1,2):
+            for workers in range(1,MAX_WORKERS+1):
                 os.environ['LOCALAPPDATA'] = str(root/f'workers-{workers}')
                 client = SimulatedClient(delay)
                 adapter = PrototypeCollector(lambda data:None)
@@ -78,10 +78,12 @@ def run(report, *, rows=12, delay=.25):
     finally:
         if original is None: os.environ.pop('LOCALAPPDATA',None)
         else: os.environ['LOCALAPPDATA']=original
-    if outputs[0]!=outputs[1]: raise RuntimeError('Worker comparison produced different saved results.')
+    if any(output!=outputs[0] for output in outputs[1:]): raise RuntimeError('Worker comparison produced different saved results.')
+    for metrics in comparisons:
+        metrics['speedup_vs_single']=comparisons[0]['elapsed_seconds']/metrics['elapsed_seconds']
     result = dict(kind='OFFLINE SIMULATION; no browser or provider requests',created_at=datetime.now().isoformat(),
                   rows=rows,simulated_solve_delay_seconds=delay,results_identical=True,
-                  speedup=comparisons[0]['elapsed_seconds']/comparisons[1]['elapsed_seconds'],runs=comparisons)
+                  speedup=comparisons[-1]['speedup_vs_single'],runs=comparisons)
     report = Path(report); report.parent.mkdir(parents=True,exist_ok=True)
     report.write_text(json.dumps(result,indent=2)+'\n',encoding='utf-8')
     print(json.dumps(result,indent=2))

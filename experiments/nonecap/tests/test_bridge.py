@@ -74,6 +74,11 @@ class BridgeTests(unittest.TestCase):
             self.assertIsNotNone(key)
             self.assertTrue(QQmlExpression(engine.rootContext(), key, 'echoMode === 2').evaluate()[0])
             self.bridge.captchaMode = 'Automatic'; self.app.processEvents()
+            self.bridge.workerCount='5'; self.app.processEvents()
+            workers=window.findChild(QObject,'workerCount')
+            self.assertEqual(workers.property('count'),5)
+            self.assertEqual(workers.property('currentText'),'5')
+            self.assertEqual(window.findChild(QObject,'skipWorker').property('count'),5)
             key.setProperty('text', KEY)
             QMetaObject.invokeMethod(key, 'textEdited')
             self.assertEqual(self.bridge.apiKey, KEY)
@@ -115,3 +120,20 @@ class BridgeTests(unittest.TestCase):
             self.bridge.startCollection()
             launch.assert_not_called()
         self.assertIn('increasing limits will not clear',self.bridge.status)
+
+    def test_worker_range_and_skip_target_follow_selected_count(self):
+        self.assertEqual(self.bridge.workerOptions,['1','2','3','4','5'])
+        self.bridge.workerCount='5'
+        self.assertEqual(self.bridge.skipOptions,['1','2','3','4','5'])
+        self.bridge.skipWorker='5'
+        self.bridge.captchaMode='Automatic'; self.bridge._phase='collecting'
+        self.bridge.skipCurrent()
+        self.assertEqual([event.is_set() for event in self.bridge._collector.worker_skips],
+                         [False,False,False,False,True])
+        self.bridge._phase='idle'; self.bridge.workerCount='2'
+        self.assertEqual(self.bridge.skipWorker,'1')
+        self.bridge.skipWorker='5'
+        self.assertEqual(self.bridge.skipWorker,'1')
+        for invalid in ('0','6','abc'):
+            self.bridge.workerCount=invalid
+            self.assertEqual(self.bridge.workerCount,'2')

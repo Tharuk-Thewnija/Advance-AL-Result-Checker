@@ -34,7 +34,7 @@ def load_ui(bridge):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--smoke-test', action='store_true', help='Open and render, then exit; no website/API requests')
-    parser.add_argument('--compare-workers',action='store_true',help='Compare 1 versus 2 workers offline with simulated API latency')
+    parser.add_argument('--compare-workers',action='store_true',help='Compare 1–5 workers offline with simulated API latency')
     parser.add_argument('--report',type=Path,help='JSON report path for --compare-workers')
     args = parser.parse_args()
     if args.smoke_test and args.compare_workers: parser.error('Choose either --smoke-test or --compare-workers.')

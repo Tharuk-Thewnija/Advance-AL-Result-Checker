@@ -5,7 +5,7 @@ from al_results.models import WorkerEvent
 from qt_app.backend import Bridge
 from .budget import Budget, LimitReached, ChargeUnconfirmed
 from .client import Client, ServiceError
-from .collector import PrototypeCollector
+from .collector import PrototypeCollector, MAX_WORKERS
 from .solver import Solver
 
 
@@ -17,7 +17,7 @@ class PrototypeBridge(Bridge):
         self._mode, self._api_key = 'Manual', ''
         self._credit_limit, self._max_attempts = '10', '3'
         self._worker_count, self._skip_worker = '1', '1'
-        self._performance = 'Choose 1 or 2 workers to compare batch throughput.'
+        self._performance = 'Choose 1–5 workers to compare batch throughput.'
         self._balance = 'Balance not checked'
         self._auto_status = 'Manual mode: solve CAPTCHA in Chrome. No automatic requests.'
         self.budget = Budget()
@@ -33,8 +33,9 @@ class PrototypeBridge(Bridge):
         def set(self, value):
             if not self.running:
                 if name == '_mode' and value not in ('Manual', 'Automatic'): return
-                if name == '_worker_count' and value not in ('1','2'): return
+                if name == '_worker_count' and value not in self.workerOptions: return
                 setattr(self, name, value)
+                if name == '_worker_count' and int(self._skip_worker)>int(value): self._skip_worker='1'
                 if name == '_api_key':
                     # Drop the old client's reference too when clearing/changing a key.
                     self._collector.solver = None
@@ -52,6 +53,8 @@ class PrototypeBridge(Bridge):
     creditLimit = _session_setting('_credit_limit', captchaChanged)
     maxAttempts = _session_setting('_max_attempts', captchaChanged)
     workerCount = _session_setting('_worker_count', captchaChanged)
+    workerOptions = Property('QVariantList',lambda self:[str(n) for n in range(1,MAX_WORKERS+1)],constant=True)
+    skipOptions = Property('QVariantList',lambda self:[str(n) for n in range(1,int(self._worker_count)+1)],notify=captchaChanged)
     performanceText = Property(str,lambda self:self._performance,notify=captchaChanged)
 
     @Property(str,notify=captchaChanged)
@@ -59,12 +62,12 @@ class PrototypeBridge(Bridge):
 
     @skipWorker.setter
     def skipWorker(self,value):
-        if value in ('1','2'):
+        if value in self.skipOptions:
             self._skip_worker=value; self.captchaChanged.emit()
 
     @Slot()
     def skipCurrent(self):
-        if self.collecting and self._mode=='Automatic' and self._worker_count=='2':
+        if self.collecting and self._mode=='Automatic' and int(self._worker_count)>1:
             self._collector.worker_skips[int(self._skip_worker)-1].set()
         else:
             super().skipCurrent()

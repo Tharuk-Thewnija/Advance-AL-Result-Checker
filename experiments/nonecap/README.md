@@ -41,13 +41,15 @@ Do not paste a real key into chat, issue reports or screenshots.
 
 ## Credit controls
 
-Choose **1** or **2 concurrent browser workers** in Automatic mode. Each worker
-owns one Chrome session and its own solver state. The two browser windows are
-labelled Worker 1 and Worker 2. Manual mode continues to use a single browser.
+Choose **1–5 concurrent browser workers** in Automatic mode. Each worker
+owns one Chrome session and its own solver state. Browser windows are labelled
+Worker 1 through Worker 5. Only workers needed for pending rows are started.
+Manual mode continues to use a single browser.
 Browser startup is serialized to protect Selenium Manager's shared driver cache;
 the actual page work and solving overlap once each session is ready.
 Stop & save and closing stop both workers; **Skip worker** applies only to the
-selected worker. One coordinator writes all completed results to SQLite, and
+selected worker. The Skip selector lists the chosen workers and resets to Worker 1
+if the count is reduced below its current target. One coordinator writes all completed results to SQLite, and
 export keeps the workbook's original row order.
 
 Defaults: **1 worker**, **10-credit stop threshold**, **3 automatic solves**. Counters cover
@@ -111,8 +113,9 @@ Redirects are refused and provider errors are replaced with fixed messages.
 
 ## Verification and limits
 
-For a live comparison, use the same small copied workbook for separate one- and
-two-worker runs. For two students, choose **2 workers**, **maximum solves 2** and
+For a live comparison, use the same small copied workbook for separate worker
+counts. Use at least five pending students to exercise all five workers.
+For two students, choose **2 workers**, **maximum solves 2** and
 a deliberate credit threshold (24 matched the observed two 12-credit solves, but
 is not a guaranteed price or spending ceiling). Select Start fresh when comparing
 already completed rows; saved prototype progress is archived. Raising limits does
@@ -121,8 +124,9 @@ two prototype windows simultaneously; the instance lock protects saved progress.
 The activity feed and CAPTCHA card report wall time and newly saved rows/minute.
 
 NoneCAP documents five concurrent API jobs on its free trial, shared per account
-across all keys. This prototype deliberately exposes one or two workers for the
-first comparison. Provider capacity does not establish the examination site's
+across all keys. This prototype exposes one through five workers, defaulting to one.
+Changing the worker count does not automatically increase credit or solve limits.
+Provider capacity does not establish the examination site's
 throughput or acceptance limits.
 
 Tests use simulated API replies and a local HTML page in real headless Chrome.
@@ -137,10 +141,10 @@ No real key or paid solve was used.
 .venv\Scripts\python.exe -m unittest discover -s tests -q
 ```
 
-The offline comparison runs the real collector/checkpoint paths on 12 fictional
+The offline comparison runs the real collector/checkpoint paths on 20 fictional
 rows, replacing browsers/API calls with a 0.25-second simulated solve. It checks
 identical saved results and reports peak parallel solves, elapsed time, rows/min
-and relative speedup. JSON is saved in the prototype data folder's `reports`
+and relative speedup for every count from 1 to 5. JSON is saved in the prototype data folder's `reports`
 directory, or at `--report <path>`. It spends no credits. Its speedup demonstrates
 scheduling overlap only; it does not predict live NoneCAP or Doenets throughput.
 
