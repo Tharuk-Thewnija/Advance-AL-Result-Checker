@@ -25,8 +25,8 @@ class Budget:
     def check(self):
         with self.lock:
             if self.blocked: raise LimitReached('Charge could not be confirmed. Automatic mode is paused for this session.')
-            if self.spent >= self.credit_limit: raise LimitReached('Session credit threshold reached. Continue manually.')
-            if self.attempts >= self.max_attempts: raise LimitReached('Session automatic-attempt limit reached. Continue manually.')
+            if self.spent >= self.credit_limit: raise LimitReached('Session credit threshold reached.')
+            if self.attempts >= self.max_attempts: raise LimitReached('Session automatic-attempt limit reached.')
 
     def reserve(self):
         with self.lock:

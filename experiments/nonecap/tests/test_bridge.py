@@ -83,3 +83,20 @@ class BridgeTests(unittest.TestCase):
         finally:
             window.close(); engine.deleteLater()
             QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+
+    def test_exhausted_credit_budget_prevents_launch_instead_of_manual_timeout(self):
+        self.bridge.apiKey=KEY; self.bridge.captchaMode='Automatic'
+        self.bridge.budget.reserve(); self.bridge.budget.settle('solve_previous',12)
+        with patch.object(self.bridge,'_launch') as launch:
+            self.bridge.startCollection()
+            launch.assert_not_called()
+        self.assertIn('credit threshold',self.bridge.status)
+        self.assertIn('No automatic request',self.bridge.status)
+
+    def test_two_worker_skip_routes_to_selected_browser(self):
+        self.bridge.captchaMode='Automatic'; self.bridge.workerCount='2'
+        self.bridge._phase='collecting'; self.bridge.skipWorker='2'
+        self.bridge.skipCurrent()
+        self.assertFalse(self.bridge._collector.worker_skips[0].is_set())
+        self.assertTrue(self.bridge._collector.worker_skips[1].is_set())
+        self.bridge._phase='idle'

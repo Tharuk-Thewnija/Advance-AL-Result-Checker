@@ -104,6 +104,12 @@ ApplicationWindow {
                                 Hint { text: "Manual is free. Automatic uses your NoneCAP account to supply a token; the checkbox may stay unticked."; Layout.fillWidth: true }
                                 ColumnLayout {
                                     visible: bridge.captchaMode === "Automatic"; Layout.fillWidth: true; spacing: 8
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        Hint { text: "Concurrent browser workers"; Layout.fillWidth: true }
+                                        Selector { objectName: "workerCount"; theme: t; model: ["1", "2"]; currentIndex: model.indexOf(bridge.workerCount); enabled: !bridge.running; onActivated: bridge.workerCount = currentText; Layout.preferredWidth: 95 }
+                                    }
+                                    Hint { text: "2 workers open 2 Chrome windows. Credit and solve limits are shared across both."; Layout.fillWidth: true }
                                     Hint { text: "API key · kept in memory for this window only" }
                                     Input {
                                         objectName: "apiKeyInput"; theme: t; Layout.fillWidth: true
@@ -120,11 +126,11 @@ ApplicationWindow {
                                         }
                                         ColumnLayout {
                                             Layout.fillWidth: true
-                                            Hint { text: "Maximum attempts" }
+                                            Hint { text: "Maximum solves · whole window" }
                                             Input { objectName: "maxAttemptsInput"; theme: t; text: bridge.maxAttempts; onTextEdited: bridge.maxAttempts = text; enabled: !bridge.running; Layout.fillWidth: true; validator: IntValidator { bottom: 1; top: 1000 } }
                                         }
                                     }
-                                    Hint { text: "Soft threshold: the final solve can exceed it. Set a dedicated key’s credit cap in the NoneCAP dashboard for stronger control. No automatic retries."; color: t.warn; Layout.fillWidth: true }
+                                    Hint { text: "Soft threshold: all in-flight solves can exceed it. Use a dedicated key’s provider-side cap for stronger control. No paid retries. A solve limit of 1 allows only one job across both workers."; color: t.warn; Layout.fillWidth: true }
                                     RowLayout {
                                         Layout.fillWidth: true
                                         ActionButton { objectName: "checkBalance"; theme: t; text: "Check balance"; enabled: !bridge.running && bridge.apiKey.length > 0; onClicked: bridge.checkBalance() }
@@ -134,6 +140,7 @@ ApplicationWindow {
                                 }
                                 Hint { objectName: "sessionUsage"; text: bridge.usageText; Layout.fillWidth: true }
                                 Hint { text: bridge.autoStatus; Layout.fillWidth: true }
+                                Hint { objectName: "performanceSummary"; text: bridge.performanceText; Layout.fillWidth: true }
                                 Hint { text: "Counters cover this window, including Stop / Resume. Limits reset when the window closes."; Layout.fillWidth: true; font.pixelSize: 11 }
                             }
                         }
@@ -303,7 +310,8 @@ ApplicationWindow {
                             RowLayout {
                                 Layout.fillWidth: true; spacing: 8
                                 ActionButton { theme: t; text: "Stop & save"; Layout.fillWidth: true; enabled: bridge.collecting; onClicked: bridge.stopCollection() }
-                                ActionButton { theme: t; text: "Skip current"; Layout.fillWidth: true; enabled: bridge.collecting; onClicked: bridge.skipCurrent() }
+                                ActionButton { theme: t; text: bridge.captchaMode === "Automatic" && bridge.workerCount === "2" ? "Skip worker " + bridge.skipWorker : "Skip current"; Layout.fillWidth: true; enabled: bridge.collecting; onClicked: bridge.skipCurrent() }
+                                Selector { objectName: "skipWorker"; theme: t; model: ["1", "2"]; currentIndex: model.indexOf(bridge.skipWorker); onActivated: bridge.skipWorker = currentText; visible: bridge.captchaMode === "Automatic" && bridge.workerCount === "2"; Layout.preferredWidth: 55; enabled: bridge.collecting }
                             }
                             RowLayout {
                                 Layout.fillWidth: true; spacing: 8

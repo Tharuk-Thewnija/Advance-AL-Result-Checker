@@ -45,7 +45,7 @@ class LocalClient:
 
 
 class BrowserTests(unittest.TestCase):
-    def run_local(self, *, failure=False):
+    def run_local(self, *, failure=False, workers=1):
         original_session = production.BrowserSession
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {'LOCALAPPDATA': directory}):
             root = Path(directory)
@@ -56,13 +56,18 @@ class BrowserTests(unittest.TestCase):
             book = load_workbook(path)
             core = private_core()
             core.RESULTS_PAGE_URL = 'data:text/html;charset=utf-8,' + quote(HTML)
-            driver = production.create_driver(headless=True)
-            core.create_driver = lambda: driver
+            drivers = []
             gets = []
-            original_get = driver.get
-            def get(url): gets.append(url); original_get(url)
-            driver.get = get
+            def create_driver():
+                driver=production.create_driver(headless=True)
+                drivers.append(driver)
+                original_get=driver.get
+                def get(url): gets.append(url); original_get(url)
+                driver.get=get
+                return driver
+            core.create_driver = create_driver
             adapter = PrototypeCollector(lambda data: None)
+            adapter.workers=workers
             client = LocalClient()
             budget = Budget(3, 3)
             adapter.solver = Solver(client, budget, lambda data: None)
@@ -101,13 +106,15 @@ class BrowserTests(unittest.TestCase):
                     self.assertEqual((client.creates, budget.spent), (2, 4))
                     logs = '\n'.join(event.payload['text'] for event in events if event.kind == 'log')
                     self.assertIn('NoneCAP token received. Reported charge: 2 credits.', logs)
-                    self.assertIn('Session: 2/3 credits; attempts: 1/3.', logs)
+                    if workers==1: self.assertIn('Session: 2/3 credits; attempts: 1/3.', logs)
                     self.assertIn('Token delivered through the site CAPTCHA callback.', logs)
                     self.assertIn('Automatic form submission triggered.', logs)
                     self.assertIn('Results received after automatic submission.', logs)
             finally:
-                try: driver.quit()
-                except Exception: pass
+                for driver in drivers:
+                    try: driver.quit()
+                    except Exception: pass
 
     def test_automatic_callback_and_excel_export_using_local_page(self): self.run_local()
     def test_automatic_failure_falls_back_without_reloading_or_skipping(self): self.run_local(failure=True)
+    def test_two_real_chrome_workers_keep_tokens_and_excel_results_separate(self): self.run_local(workers=2)

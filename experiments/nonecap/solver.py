@@ -16,6 +16,7 @@ class Solver:
     def __init__(self, client, budget, notify):
         self.client, self.budget, self.notify = client, budget, notify
         self.solution_meta = {}
+        self.last_charge = 0
 
     def update(self, **extra):
         self.notify(dict(self.budget.snapshot(), **extra))
@@ -32,6 +33,7 @@ class Solver:
             raise LimitReached('The final charge could not be confirmed. Automatic mode is disabled.')
         # Missing costs are never treated as free, even on failed jobs.
         self.budget.settle(job, reply.get('credits_charged'))
+        self.last_charge = reply['credits_charged']
         self.update()
 
     def cancel(self, job):

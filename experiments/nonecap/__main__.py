@@ -34,8 +34,17 @@ def load_ui(bridge):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--smoke-test', action='store_true', help='Open and render, then exit; no website/API requests')
+    parser.add_argument('--compare-workers',action='store_true',help='Compare 1 versus 2 workers offline with simulated API latency')
+    parser.add_argument('--report',type=Path,help='JSON report path for --compare-workers')
     args = parser.parse_args()
+    if args.smoke_test and args.compare_workers: parser.error('Choose either --smoke-test or --compare-workers.')
+    if args.report and not args.compare_workers: parser.error('--report requires --compare-workers.')
     data_dir = configure_storage()
+    if args.compare_workers:
+        from datetime import datetime
+        from .benchmark import run
+        run(args.report or data_dir/'reports'/f'worker-comparison-{datetime.now():%Y%m%d-%H%M%S}.json')
+        return 0
     app = QApplication(sys.argv[:1])
     app.setApplicationName('ALResultsCollectorNoneCAPPrototype')
     app.setApplicationVersion('0.3.1-prototype')
