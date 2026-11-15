@@ -5,13 +5,12 @@ from pathlib import Path
 import sys
 import time
 
-from PySide6.QtCore import QCoreApplication, QEvent, QTimer, QUrl, Qt
+from PySide6.QtCore import QCoreApplication, QEvent, QTimer, Qt
 from PySide6.QtGui import QIcon
-from PySide6.QtQml import QQmlApplicationEngine
-from PySide6.QtQuickControls2 import QQuickStyle
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from al_results.instance import InstanceLock
+from al_results import __version__
 from .backend import PrototypeBridge
 
 
@@ -22,14 +21,7 @@ def configure_storage():
     return root / 'ALResultsCollector'
 
 
-def load_ui(bridge):
-    QQuickStyle.setStyle('Basic')
-    engine = QQmlApplicationEngine()
-    engine.rootContext().setContextProperty('bridge', bridge)
-    engine.load(QUrl.fromLocalFile(str(Path(__file__).parent / 'qml' / 'Main.qml')))
-    if not engine.rootObjects(): raise RuntimeError('The prototype interface could not load.')
-    return engine, engine.rootObjects()[0]
-
+from qt_app.main import load_ui
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -47,7 +39,7 @@ def main():
         return 0
     app = QApplication(sys.argv[:1])
     app.setApplicationName('ALResultsCollectorNoneCAPPrototype')
-    app.setApplicationVersion('0.3.1-prototype')
+    app.setApplicationVersion(__version__)
     app.setWindowIcon(QIcon(str(Path(__file__).resolve().parents[2] / 'packaging' / 'app.ico')))
     try:
         with InstanceLock():

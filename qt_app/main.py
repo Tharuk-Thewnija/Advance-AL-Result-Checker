@@ -37,7 +37,20 @@ def launch():
     parser.add_argument('--verify-browser', action='store_true', help='Test real Chrome with a local page; no examination-site lookup')
     parser.add_argument('--mock', action='store_true', help='Offline 1,500-student test; no website requests')
     parser.add_argument('--mock-rows', type=int, default=1500, help='Number of fictional rows (1–100000)')
+    parser.add_argument('--compare-workers',action='store_true',help='Offline comparison of 1–5 workers; no paid solves')
+    parser.add_argument('--verify-nonecap',action='store_true',help='Verify automatic collection with local Chrome pages and simulated API replies')
     args = parser.parse_args()
+    if args.compare_workers or args.verify_nonecap:
+        if args.compare_workers and args.verify_nonecap or args.mock or args.smoke_test or args.verify_mock or args.verify_browser or args.mock_rows!=1500:
+            parser.error('Choose one diagnostic mode at a time.')
+        if args.verify_nonecap:
+            if args.report is None: parser.error('--verify-nonecap requires --report')
+            from al_results.nonecap.verification import run
+            return run(args.report)
+        from datetime import datetime
+        from al_results.nonecap.benchmark import run
+        run(args.report or configure_storage(mock=True)/'reports'/f'worker-comparison-{datetime.now():%Y%m%d-%H%M%S}.json')
+        return 0
     if args.verify_browser:
         if args.report is None:
             parser.error('--verify-browser requires --report')
@@ -87,6 +100,8 @@ def launch():
                                       graphics_api=window.rendererInterface().graphicsApi().name,
                                       subjects=bridge.source.rowCount(), loaded=True,
                                       data_directory=str(data_dir), mock=args.mock)
+                        result.update(captcha_mode=bridge.captchaMode,max_workers=len(bridge.workerOptions),
+                                      automatic_controls=not bridge.mockMode)
                         try:
                             if args.report:
                                 args.report.parent.mkdir(parents=True, exist_ok=True)
@@ -108,6 +123,7 @@ def launch():
                 bridge.requestClose()
                 while bridge.running:
                     app.processEvents(); time.sleep(.01)
+                bridge.apiKey = ''
                 if metrics:
                     metrics.stop()
                     try:

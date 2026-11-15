@@ -12,6 +12,8 @@ windows = Path(os.environ['SystemRoot'])
 os.environ['PATH'] = os.pathsep.join(map(str, [Path(sys.base_prefix), Path(sys.base_prefix) / 'DLLs', windows / 'System32', windows]))
 data = collect_data_files('selenium')
 data += [(str(root / 'al_results' / 'data' / 'subjects.json'), 'al_results/data')]
+data += [(str(root / 'al_results' / 'collector.py'), 'al_results')]
+data += [(str(path), 'al_results/nonecap') for path in (root/'al_results'/'nonecap').glob('*.js')]
 data += [(str(root / 'qt_app' / 'qml'), 'qt_app/qml'),
          (str(root / 'packaging' / 'app.ico'), 'packaging'),
          (str(root / 'packaging' / 'licenses'), 'third_party_licenses'),
@@ -33,7 +35,7 @@ a = Analysis([str(root / 'checker.py')], pathex=[str(root)], binaries=[], datas=
              hiddenimports=['openpyxl', 'xlrd', *collect_submodules('selenium.webdriver')],
              excludes=['tkinter', '_tkinter', 'customtkinter', 'matplotlib', 'scipy', 'IPython',
                        'pytest', 'notebook', 'PyQt5', 'PyQt6', 'PySide2', 'qt_app.tests',
-                       'tests', 'xlwt'],
+                       'tests', 'experiments', 'xlwt'],
              noarchive=False)
 # This Qt Windows build uses the OS-provided, unversioned ICU API. A third-party
 # icuuc.dll with suffixed symbols must never shadow Windows' copy in the bundle.

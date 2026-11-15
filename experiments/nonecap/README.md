@@ -1,9 +1,10 @@
 # Isolated NoneCAP prototype
 
-This experimental source-only launcher is on `codex/nonecap-prototype`. The
-released app, launchers, installer and checkpoints are unchanged. It reuses the
-existing Excel/Qt backend and loads a private collector module without patching
-the production collector's globals.
+The tested integration and refreshed UI were promoted into the normal app in
+version 0.4.0. This source-only comparison launcher remains available with its
+own app-data folder. It now reuses the production code and view; the earlier
+standalone implementation is preserved in Git tag
+`backup/nonecap-prototype-2026-11-15`. Existing checkpoints stay separate.
 
 ## Run locally
 
@@ -169,8 +170,8 @@ your small live trial. A working extension does not establish API compatibility.
 Some sites bind tokens to browser sessions or IPs; this prototype has no proxy
 integration. Unsupported/multiple widgets or a changed website may need manual
 mode. After automatic submission it waits up to 20 seconds for results, then
-allows the normal manual CAPTCHA timeout on the same page. This prototype is not
-included in the EXE/installer or release.
+allows the normal manual CAPTCHA timeout on the same page. The EXE/installer
+includes the normal app's integration, not this separate comparison launcher.
 
 Sources: [NoneCAP API reference](https://nonecap.com/api-reference/),
 [pricing](https://nonecap.com/pricing/).

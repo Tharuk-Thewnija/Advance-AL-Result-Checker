@@ -27,11 +27,14 @@ def verify(executable, output):
     assert not list(payload.rglob('*tkinter*'))
     assert not list(payload.rglob('icuuc.dll'))
     assert (payload / 'third_party_licenses/LGPL-3.0.txt').is_file()
+    assert (payload / 'al_results/collector.py').is_file()
+    assert (payload / 'al_results/nonecap/browser_hook.js').is_file()
     subprocess.run([str(manager), '--version'], env=env, cwd=working, check=True, timeout=20)
     startup = output / 'startup.json'
     subprocess.run([str(exe), '--smoke-test', '--report', str(startup)], env=env, cwd=working, check=True, timeout=45)
     data = json.loads(startup.read_text())
     assert data['loaded'] and data['toolkit'] == 'QtQuick' and data['subjects'] == 63
+    assert data['captcha_mode']=='Manual' and data['max_workers']==5 and data['automatic_controls']
     browser_report = output / 'browser.json'
     subprocess.run([str(exe), '--verify-browser', '--report', str(browser_report)], env=env, cwd=working, check=True, timeout=120)
     browser = json.loads(browser_report.read_text())
@@ -42,9 +45,13 @@ def verify(executable, output):
     assert mock['counts'] == {'total': 1500, 'processed': 1500, 'completed': 1455, 'skipped': 30, 'failed': 15}
     assert mock['checks'].startswith('passed:')
     assert Path(mock['last_export']).is_file()
+    automatic_report=output/'nonecap-local.json'
+    subprocess.run([str(exe),'--verify-nonecap','--report',str(automatic_report)],env=env,cwd=working,check=True,timeout=180)
+    automatic=json.loads(automatic_report.read_text())
+    assert automatic['checks']=='passed' and automatic['completed']==2 and automatic['same_job_receipt_rechecks']==1
     summary = dict(version=data['version'], startup='passed', graphics_api=data['graphics_api'],
                    relocated_exe=str(exe), browser='passed', browser_version=browser['browser_version'],
-                   mock='passed', counts=mock['counts'])
+                   mock='passed', counts=mock['counts'],automatic='passed',automatic_details=automatic)
     (output / 'verification.json').write_text(json.dumps(summary, indent=2) + '\n')
     print(json.dumps(summary, indent=2))
 

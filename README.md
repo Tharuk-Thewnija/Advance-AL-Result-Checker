@@ -1,20 +1,22 @@
 # A/L Results Collector
 
 A local Windows desktop tool for tuition teachers and institutes. Upload one class
-workbook, choose the subjects and fields you need, complete CAPTCHA in Chrome, and
+workbook, choose the subjects and fields you need, verify CAPTCHA manually or with
+optional NoneCAP automation, and
 export a new Excel file. The main interface now uses Python and Qt Quick (PySide6).
 
 ## Run
 
-- Installer: `dist/installer/ALResultsCollector-Setup-0.3.1.exe`.
-- Portable: extract `dist/ALResultsCollector-0.3.1-portable.zip` and open
+- Installer: `dist/installer/ALResultsCollector-Setup-0.4.0.exe`.
+- Portable: extract `dist/ALResultsCollector-0.4.0-portable.zip` and open
   `ALResultsCollector/ALResultsCollector.exe`. Keep `_internal` beside the EXE.
 - Source: double-click `run.cmd` after the setup below.
 
 The installer runs for the current Windows user and adds a Start menu shortcut and
 uninstaller. Python is bundled. Chrome and an internet connection are needed for
 real collection. Selenium Manager obtains a compatible ChromeDriver when needed.
-The application does not solve or bypass CAPTCHA.
+Manual verification is the default and needs no NoneCAP account. Automatic mode
+uses your own NoneCAP API key and can spend provider credits.
 
 ```powershell
 py -m venv .venv
@@ -39,8 +41,11 @@ The retired Tkinter UI and comparison prototype are recoverable from Git tag
 3. Set the exam year. Advanced settings provides the CAPTCHA timeout and output
    folder; the default is the input workbook's folder. Light/Dark/System themes
    and selections are remembered locally.
-4. Start collection. Complete CAPTCHA and submit in Chrome for each student.
-   Stop & save keeps processed rows; Skip current skips the current student.
+4. Choose Manual or Automatic verification. In Manual mode, complete CAPTCHA and
+   submit in Chrome. In Automatic mode, enter your NoneCAP API key, choose 1–5
+   parallel browsers and set the session limits. Leave CAPTCHA untouched unless
+   prompted for manual help. Stop & save keeps processed rows; Skip targets the
+   current student or selected worker.
 5. Export to Excel, then Open folder. Each export gets a timestamp and unique suffix.
 
 Import, browser collection and export run on worker threads. Closing during an
@@ -108,6 +113,55 @@ is saved under `reports` on close. Startup/background throttling can increase th
 largest interval; it is not GPU frame time. This does not measure live scraping,
 Chrome memory, network or CAPTCHA overhead. Use `--mock-rows 5000` for a larger file.
 
+## NoneCAP automation and credit costs
+
+**Observed cost: one NIC lookup / one complete CAPTCHA solve used 12 NoneCAP
+credits in the maintainer's November 2026 live tests.** For planning, 5 NICs at
+that observed rate would use about 60 credits. This is a test observation, not a
+fixed price or guarantee. It is not 12 credits per image or per challenge round:
+one solve can contain multiple rounds, and provider charges can vary. Check your
+dashboard and [NoneCAP's pricing](https://nonecap.com/pricing/) before large runs.
+
+- **Parallel browsers (1–5):** each worker owns its Chrome session. The free API
+  trial currently allows five jobs in flight per account, shared across keys and
+  other clients. More workers improve batch throughput only when the provider and
+  examination site can serve them. Browser startup is serialized to protect the
+  driver cache; solving then overlaps.
+- **Solve attempts:** the maximum number of automatic solve requests across the
+  entire app window. Free and failed attempts count too. This does not set the
+  number of hCaptcha image rounds or retries per student. No paid solve is silently
+  retried.
+- **Pause at (credits):** new solves pause once confirmed session spending reaches
+  this amount. **It is a soft threshold: all already active solves can finish above
+  it.** A dedicated provider-side key cap offers stronger spending control.
+- **This window:** used/allowed counters carry over across workers, Stop/Resume
+  and additional workbooks. Changing the worker count does not raise the limits.
+  Closing resets the app's local counters, not the provider's balance or charges.
+
+Unknown billing pauses automatic work and keeps the student pending. The app
+rechecks the same job once if its final charge is missing; this is a read-only
+receipt lookup, not a new paid solve. Raising the spending limit does not clear
+an unconfirmed charge. Check the provider history before restarting after an
+uncertain request. Stop/Skip/closing request cancellation of pending jobs, but a
+solve can finish before cancellation and still incur a charge.
+
+The masked key stays in memory and is not saved by the app or put in logs,
+checkpoints, command-line arguments or exports. The app sends NoneCAP the public
+form URL, widget sitekey, optional challenge data and user-agent; it does not send
+student NICs, names or workbook contents. Tokens are delivered to the examination
+page and are not stored. Account and billing details: [NoneCAP API reference](https://nonecap.com/api-reference/).
+
+To run another class without restarting, export the current results, choose the
+next workbook, press Start and choose **Start fresh** if prompted. The previous
+checkpoint is archived. The key and session usage remain in the current window;
+automatic mode still needs enough allowance. **Stop & save** keeps progress in
+the app; **Export to Excel** creates the spreadsheet file.
+
+The isolated comparison launcher remains available under `experiments/nonecap/`.
+Its app data stays in `ALResultsCollectorNoneCAPPrototype`; it is not imported into
+or overwritten by the normal app. Previous source checkpoints remain in Git tags
+`backup/pre-nonecap-main-2026-11-15` and `backup/nonecap-prototype-2026-11-15`.
+
 ## Development and builds
 
 ```powershell
@@ -129,11 +183,17 @@ Smoke-check a bundle and write a JSON report:
 .\dist\ALResultsCollector\ALResultsCollector.exe --smoke-test --report startup-report.json
 .\dist\ALResultsCollector\ALResultsCollector.exe --verify-mock --report mock-release-report.json
 .\dist\ALResultsCollector\ALResultsCollector.exe --verify-browser --report browser-release-report.json
+.\dist\ALResultsCollector\ALResultsCollector.exe --verify-nonecap --report nonecap-local-report.json
+.\dist\ALResultsCollector\ALResultsCollector.exe --compare-workers --report worker-comparison.json
 ```
 
 The offline release check uses a fresh workspace next to its report, tests the real
 view through stop/export/resume, and verifies exact 1,500-row exports. It sends no
 student data. Its shortened delays are not a prediction of live collection speed.
+The NoneCAP diagnostic uses two real headless Chrome sessions with local HTML,
+simulated service replies, receipt reconciliation and real Excel export. It makes
+no paid API calls or examination lookups. The worker comparison uses synthetic
+records and simulated latency for all five worker counts.
 Install and verify on a separate Windows computer without Python before public
 release. The binaries are unsigned; this development machine cannot establish
 clean-machine compatibility or sign them without a code-signing certificate.

@@ -19,6 +19,10 @@ from al_results.settings import load_preferences, save_preferences, validate_con
 from al_results.subjects import FIELDS
 from .subjects import Subjects, SubjectFilter
 from .workers import Task
+from al_results.nonecap.client import Client, ServiceError
+from al_results.nonecap.budget import Budget, LimitReached, ChargeUnconfirmed
+from al_results.nonecap.collector import AutomaticCollector, MAX_WORKERS
+from al_results.nonecap.solver import Solver
 
 
 class Bridge(QObject):
@@ -29,14 +33,26 @@ class Bridge(QObject):
     logChanged = Signal()
     readyToClose = Signal()
     diagnosticsChanged = Signal()
+    captchaChanged = Signal()
+    creditUpdate = Signal(dict)
+    prototypeMode = Property(bool, lambda self: self._prototype, constant=True)
 
-    def __init__(self, *, mock=False, collector=None):
+    def __init__(self, *, mock=False, collector=None, prototype=False, client_factory=Client):
         super().__init__()
+        self._prototype = prototype
+        self._mode, self._api_key = 'Manual', ''
+        self._credit_limit, self._max_attempts = '10', '3'
+        self._worker_count, self._skip_worker = '1', '1'
+        self._performance = 'Choose 1–5 workers to compare batch throughput.'
+        self._balance = 'Balance not checked'
+        self._auto_status = 'Manual mode: solve CAPTCHA in Chrome. No automatic requests.'
+        self.budget = Budget()
+        self.client_factory = client_factory
         self._mock = mock
         if collector is None and mock:
             from .mock_data import MockCollector
             collector = MockCollector()
-        self._collector = collector or collect
+        self._collector = collector or (collect if mock else AutomaticCollector(self.creditUpdate.emit))
         self._diagnostics = ''
         prefs = load_preferences()
         self.source = Subjects(prefs['subjects'], self)
@@ -50,7 +66,7 @@ class Bridge(QObject):
         self._status = 'Choose a student workbook and your subjects.'
         self._current = 'No student in progress'
         self._counts = dict(total=0, processed=0, completed=0, skipped=0, failed=0)
-        self._logs = deque(['Qt interface ready. Saved progress is separate from the original app.'], maxlen=200)
+        self._logs = deque(['Ready. Progress is saved locally; any NoneCAP key stays in memory only.'], maxlen=200)
         self._task = None; self._prepared = None
         self._book = self._config = None
         self._has_results = False; self._last_output = ''
@@ -60,6 +76,7 @@ class Bridge(QObject):
         self.timer = QTimer(self)
         self.timer.setInterval(40); self.timer.timeout.connect(self._drain)
         self.timer.start()
+        self.creditUpdate.connect(self._credit_update, Qt.ConnectionType.QueuedConnection)
         QGuiApplication.styleHints().colorSchemeChanged.connect(lambda _: self.themeChanged.emit())
 
     mockMode = Property(bool, lambda self: self._mock, constant=True)
@@ -223,6 +240,8 @@ class Bridge(QObject):
     def startCollection(self):
         if self.running or self._closing:
             return
+        if not self._prepare_nonecap():
+            return
         try:
             if not self._path.strip():
                 raise ValueError('Choose an existing Excel file.')
@@ -261,6 +280,13 @@ class Bridge(QObject):
 
     def _handle(self, event):
         p = event.payload
+        if event.kind == 'nonecap_balance':
+            self._credit_update(p); self._status = 'Balance checked. No solve was requested.'
+            return
+        if event.kind == 'nonecap_error':
+            self._auto_status = p['message']; self._status = self._auto_status
+            self.captchaChanged.emit()
+            return
         if event.kind == 'prepared':
             if self._closing:
                 return
@@ -281,6 +307,11 @@ class Bridge(QObject):
                 self._status = 'Chrome was closed. Saved progress is kept. Start collection to reopen Chrome and resume.'
             if p.get('error'):
                 self._status += ' ' + p['error']
+            if p.get('reason') == 'automatic_limit':
+                self._status = 'Automatic collection paused at the session limit. Pending rows are kept. Adjust limits or select Manual before starting again.'
+            elif p.get('reason') == 'billing_unconfirmed':
+                self._status = 'Automatic collection paused because a final charge cannot be confirmed. Pending rows are kept. Check NoneCAP history or select Manual; raising limits will not clear this billing pause.'
+                self._auto_status = self._status; self.captchaChanged.emit()
             self.log(self._status)
         elif event.kind == 'exported':
             self._last_output = str(p['path']); self._stage = 'export'
@@ -330,7 +361,10 @@ class Bridge(QObject):
     @Slot()
     def skipCurrent(self):
         if self.collecting:
-            self.skip_event.set()
+            if isinstance(self._collector, AutomaticCollector) and self._mode == 'Automatic' and int(self._worker_count) > 1:
+                self._collector.worker_skips[int(self._skip_worker)-1].set()
+            else:
+                self.skip_event.set()
 
     @Slot()
     def exportResults(self):
@@ -359,4 +393,117 @@ class Bridge(QObject):
             return False
         self._prepared = None; self._phase = 'idle'
         self._persist()
+        return True
+
+
+    def _session_setting(name, notify):
+        def get(self): return getattr(self, name)
+        def set(self, value):
+            if not self.running:
+                if name == '_mode' and value not in ('Manual', 'Automatic'): return
+                if name == '_worker_count' and value not in self.workerOptions: return
+                setattr(self, name, value)
+                if name == '_worker_count' and int(self._skip_worker)>int(value): self._skip_worker='1'
+                if name == '_api_key':
+                    # Drop the old client's reference too when clearing/changing a key.
+                    if isinstance(self._collector,AutomaticCollector): self._collector.solver = None
+                    self._balance = 'Balance not checked'
+                if name == '_mode':
+                    if value == 'Manual' and isinstance(self._collector,AutomaticCollector): self._collector.solver = None
+                    self._auto_status = ('Manual mode: solve CAPTCHA in Chrome. No automatic requests.' if value == 'Manual' else
+                        'Automatic mode is disabled for this window; collection will continue manually.' if getattr(self._collector, 'disabled', False) else
+                        'Automatic mode selected. Start may spend NoneCAP credits.')
+                self.captchaChanged.emit()
+        return Property(str, get, set, notify=notify)
+
+    captchaMode = _session_setting('_mode', captchaChanged)
+
+    apiKey = _session_setting('_api_key', captchaChanged)
+
+    creditLimit = _session_setting('_credit_limit', captchaChanged)
+
+    maxAttempts = _session_setting('_max_attempts', captchaChanged)
+
+    workerCount = _session_setting('_worker_count', captchaChanged)
+
+    workerOptions = Property('QVariantList',lambda self:[str(n) for n in range(1,MAX_WORKERS+1)],constant=True)
+
+    skipOptions = Property('QVariantList',lambda self:[str(n) for n in range(1,int(self._worker_count)+1)],notify=captchaChanged)
+
+    performanceText = Property(str,lambda self:self._performance,notify=captchaChanged)
+
+    @Property(str,notify=captchaChanged)
+    def skipWorker(self): return self._skip_worker
+
+    @skipWorker.setter
+    def skipWorker(self,value):
+        if value in self.skipOptions:
+            self._skip_worker=value; self.captchaChanged.emit()
+
+    balanceText = Property(str, lambda self: self._balance, notify=captchaChanged)
+
+    autoStatus = Property(str, lambda self: self._auto_status, notify=captchaChanged)
+
+    usageText = Property(str, lambda self: (
+        f"This window: {self.budget.snapshot()['attempts']} / {self._max_attempts or '—'} attempts · "
+        f"{self.budget.snapshot()['spent']} / {self._credit_limit or '—'} credits" +
+        (' · charge unconfirmed' if self.budget.snapshot()['blocked'] else '')), notify=captchaChanged)
+
+    @Slot(dict)
+    def _credit_update(self, data):
+        if data.get('performance'): self._performance=data['performance']
+        if 'balance' in data:
+            self._balance = f"Last checked: {data['balance']} credits · daily allowance left: {data['plan_remaining']}"
+        if data.get('status'):
+            self._auto_status = data['status']
+            if self.collecting:
+                self._status = self._auto_status
+                self.stateChanged.emit()
+        self.captchaChanged.emit()
+
+    @Slot()
+    def checkBalance(self):
+        if self.running or self._closing: return
+        try:
+            client = self.client_factory(self._api_key)
+        except ServiceError as exc:
+            self._auto_status = str(exc); self._status=self._auto_status
+            self.captchaChanged.emit(); self.stateChanged.emit(); return
+
+        def check():
+            try:
+                return WorkerEvent('nonecap_balance', client.balance())
+            except ServiceError as exc:
+                return WorkerEvent('nonecap_error', {'message': str(exc)})
+        self._launch('checking', 'Checking NoneCAP balance (no solve)…', check)
+
+    def _prepare_nonecap(self):
+        if self._mock or not isinstance(self._collector, AutomaticCollector): return True
+        try:
+            if self._mode == 'Automatic':
+                try:
+                    self.budget.configure(int(self._credit_limit), int(self._max_attempts))
+                except ValueError:
+                    raise ValueError('Enter whole numbers: credit threshold 1–100,000 and attempts 1–1,000.') from None
+                client = self.client_factory(self._api_key)
+                self.budget.check()
+                if self._collector.disabled:
+                    raise LimitReached('Automatic mode was disabled after an earlier failure in this window.')
+                self._collector.solver = Solver(client, self.budget, self.creditUpdate.emit)
+                self._collector.workers = int(self._worker_count)
+                self._auto_status = f'Automatic mode selected: {self._worker_count} worker(s), with shared session limits. Start may spend NoneCAP credits.'
+            else:
+                self._collector.solver = None
+                self._auto_status = 'Manual mode: solve CAPTCHA in Chrome. No automatic requests.'
+        except ChargeUnconfirmed as exc:
+            self._status=str(exc)+' No automatic request was made. Check NoneCAP history or select Manual; increasing limits will not clear this pause.'
+            self._auto_status=self._status; self.log(self._status)
+            self.stateChanged.emit(); self.captchaChanged.emit(); return False
+        except LimitReached as exc:
+            self._status=str(exc)+' No automatic request was made. Session counters are retained; adjust limits or select Manual.'
+            self._auto_status=self._status; self.log(self._status)
+            self.stateChanged.emit(); self.captchaChanged.emit(); return False
+        except (ServiceError, ValueError) as exc:
+            self._status = str(exc); self.stateChanged.emit(); return False
+        self.captchaChanged.emit()
         return True
