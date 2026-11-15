@@ -20,7 +20,7 @@ The title/footer say **NONECAP PROTOTYPE**. Normal `run.cmd` opens the released 
 2. Leave **Manual** selected for the existing CAPTCHA workflow with no automatic
    service requests.
 3. For a small live trial, choose **Automatic**, paste your key locally, and set
-   **Maximum solves** to **1**. Start with a copy of a small workbook.
+   **Solve attempts** to **1**. Start with a copy of a small workbook.
 4. Optionally **Check balance**; this reads balance/daily allowance without a
    solve. Entering a key or changing modes makes no API request.
 5. Start collection. Automatic mode can spend credits. Complete CAPTCHA manually
@@ -41,6 +41,22 @@ Do not paste a real key into chat, issue reports or screenshots.
 
 ## Credit controls
 
+The CAPTCHA panel groups **Account**, **Parallel browsers** and **Session limits**.
+Use **Hide key & balance** to fold away the account details without clearing the
+key. **How limits work** expands the detailed explanation. The used/allowed
+summary covers the whole window. **Pause at (credits)** stops new solves at that
+reported amount; already active solves may finish above it.
+
+Action colours match their purpose: purple Start, soft red Stop & save, amber
+Skip, green Export to Excel and blue Open folder. Stop saves completed progress
+in the app; Export creates the spreadsheet file.
+
+You can run another workbook without restarting: export the current results,
+choose the next workbook, press Start, then choose **Start fresh** if prompted.
+The previous checkpoint is archived. API key and session usage carry over, so
+automatic mode still needs enough unused allowance. A billing-unconfirmed pause
+is not cleared by choosing another workbook or increasing the limits.
+
 Choose **1–5 concurrent browser workers** in Automatic mode. Each worker
 owns one Chrome session and its own solver state. Browser windows are labelled
 Worker 1 through Worker 5. Only workers needed for pending rows are started.
@@ -52,7 +68,7 @@ selected worker. The Skip selector lists the chosen workers and resets to Worker
 if the count is reduced below its current target. One coordinator writes all completed results to SQLite, and
 export keeps the workbook's original row order.
 
-Defaults: **1 worker**, **10-credit stop threshold**, **3 automatic solves**. Counters cover
+Defaults: **1 parallel browser**, **Pause at 10 credits**, **3 solve attempts**. Counters cover
 the entire window, including Stop/Resume, Start fresh, key and mode changes.
 Editing limits does not clear counters. Closing resets local counters; these are
 not an account-wide budget.
@@ -63,7 +79,7 @@ provider-side credit cap in the NoneCAP dashboard for stronger control.
 The maximum attempt count is a strict local submission limit, including free or
 failed attempts. There is at most one solve per worker in flight, and no automatic
 paid retries. Counters and admission checks are shared atomically between workers.
-**Maximum solves = 1 allows one API job for the whole window**, not one attempt
+**Solve attempts = 1 allows one API job for the whole window**, not one attempt
 per student or per worker, and does not control hCaptcha challenge rounds.
 
 Before each solve, the prototype checks limits and balance/daily allowance.
@@ -115,7 +131,7 @@ Redirects are refused and provider errors are replaced with fixed messages.
 
 For a live comparison, use the same small copied workbook for separate worker
 counts. Use at least five pending students to exercise all five workers.
-For two students, choose **2 workers**, **maximum solves 2** and
+For two students, choose **2 parallel browsers**, **Solve attempts 2** and
 a deliberate credit threshold (24 matched the observed two 12-credit solves, but
 is not a guaranteed price or spending ceiling). Select Start fresh when comparing
 already completed rows; saved prototype progress is archived. Raising limits does

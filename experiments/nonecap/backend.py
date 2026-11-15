@@ -74,8 +74,8 @@ class PrototypeBridge(Bridge):
     balanceText = Property(str, lambda self: self._balance, notify=captchaChanged)
     autoStatus = Property(str, lambda self: self._auto_status, notify=captchaChanged)
     usageText = Property(str, lambda self: (
-        f"This window: {self.budget.snapshot()['spent']} credits reported · "
-        f"{self.budget.snapshot()['attempts']} automatic attempts" +
+        f"This window: {self.budget.snapshot()['attempts']} / {self._max_attempts or '—'} attempts · "
+        f"{self.budget.snapshot()['spent']} / {self._credit_limit or '—'} credits" +
         (' · charge unconfirmed' if self.budget.snapshot()['blocked'] else '')), notify=captchaChanged)
 
     @Slot(dict)
@@ -96,7 +96,8 @@ class PrototypeBridge(Bridge):
         try:
             client = self.client_factory(self._api_key)
         except ServiceError as exc:
-            self._auto_status = str(exc); self.captchaChanged.emit(); return
+            self._auto_status = str(exc); self._status=self._auto_status
+            self.captchaChanged.emit(); self.stateChanged.emit(); return
 
         def check():
             try:

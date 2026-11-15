@@ -5,7 +5,8 @@ import time
 import unittest
 from unittest.mock import patch
 
-from PySide6.QtCore import QObject, QMetaObject, QCoreApplication, QEvent
+from PySide6.QtCore import QObject, QMetaObject, QCoreApplication, QEvent, QPointF
+from PySide6.QtQuick import QQuickItem
 from PySide6.QtWidgets import QApplication
 from PySide6.QtQml import QQmlExpression
 
@@ -137,3 +138,86 @@ class BridgeTests(unittest.TestCase):
         for invalid in ('0','6','abc'):
             self.bridge.workerCount=invalid
             self.assertEqual(self.bridge.workerCount,'2')
+
+    def test_account_can_collapse_and_limits_help_is_optional(self):
+        self.bridge.captchaMode='Automatic'
+        engine,window=load_ui(self.bridge)
+        try:
+            self.app.processEvents()
+            details=window.findChild(QObject,'accountDetails')
+            self.assertTrue(details.property('visible'))
+            toggle=window.findChild(QObject,'accountToggle')
+            QMetaObject.invokeMethod(toggle,'clicked'); self.app.processEvents()
+            self.assertFalse(details.property('visible'))
+            help_text=window.findChild(QObject,'limitsHelp')
+            self.assertFalse(help_text.property('visible'))
+            QMetaObject.invokeMethod(window.findChild(QObject,'limitsHelpToggle'),'clicked')
+            self.app.processEvents(); self.assertTrue(help_text.property('visible'))
+            self.assertIn('0 / 3 attempts',self.bridge.usageText)
+            for name,tone in [('stopCollection','stop'),('skipCurrent','warning'),('exportResults','success'),('openOutputFolder','info')]:
+                self.assertEqual(window.findChild(QObject,name).property('tone'),tone)
+        finally:
+            window.close(); engine.deleteLater()
+            QCoreApplication.sendPostedEvents(None,QEvent.Type.DeferredDelete)
+
+    def test_two_workbooks_can_run_without_restarting_and_keep_usage(self):
+        import pandas as pd
+        from experiments.nonecap.benchmark import SimulatedClient,WIDGET,CARD
+        client=SimulatedClient(0)
+        self.bridge.client_factory=lambda key:client
+        self.bridge.apiKey=KEY; self.bridge.captchaMode='Automatic'
+        self.bridge.creditLimit='100'; self.bridge.maxAttempts='10'
+        def factory(core,solver,emit,label=''):
+            class Session:
+                def fetch(self,nic,config,stop,skip,ready): solver.solve(WIDGET,stop,skip); return CARD
+                def close(self): pass
+            return Session
+        self.bridge._collector.session_type=factory
+        def pump():
+            deadline=time.monotonic()+10
+            while self.bridge.running and not self.bridge.needsDecision and time.monotonic()<deadline:
+                self.app.processEvents(); time.sleep(.005)
+            self.assertTrue(not self.bridge.running or self.bridge.needsDecision)
+        first=self.root/'first.xlsx'; second=self.root/'second.xlsx'
+        for path,nic in [(first,'200000000001'),(second,'200000000002')]:
+            pd.DataFrame({'NIC':[nic]}).to_excel(path,index=False)
+        self.bridge.filePath=str(first); self.bridge.startCollection(); pump()
+        self.assertEqual(self.bridge.completed,1)
+        self.bridge.exportResults(); pump()
+        first_export=Path(self.bridge.lastOutput)
+        self.assertTrue(first_export.exists())
+        self.bridge.filePath=str(second); self.bridge.startCollection(); pump()
+        self.assertTrue(self.bridge.decisionMismatch)
+        self.bridge.decide('restart'); pump()
+        self.assertEqual(self.bridge.completed,1)
+        self.assertEqual((self.bridge.budget.attempts,self.bridge.budget.spent),(2,24))
+        self.assertEqual(self.bridge.apiKey,KEY)
+        self.assertTrue(first_export.exists())
+        self.assertEqual(len(list(self.data.glob('archived-*.sqlite3'))),1)
+
+    def test_actions_fit_minimum_window_with_long_status_in_both_themes(self):
+        self.bridge.captchaMode='Automatic'; self.bridge.workerCount='5'
+        self.bridge._counts.update(total=4,processed=4,completed=4)
+        self.bridge._has_results=True
+        self.bridge._performance='5 workers · 4 rows · 84.2s · 2.9 rows/min'
+        self.bridge._status='Automatic collection paused because a final charge cannot be confirmed. Pending rows are kept. Check NoneCAP history or select Manual; raising limits will not clear this billing pause.'
+        engine,window=load_ui(self.bridge)
+        try:
+            window.resize(1020,750)
+            for theme in ('Dark','Light'):
+                self.bridge.theme=theme
+                for _ in range(10): self.app.processEvents(); time.sleep(.01)
+                for name in ('startCollection','stopCollection','skipCurrent','exportResults','openOutputFolder'):
+                    button=window.findChild(QQuickItem,name)
+                    bottom=button.mapToScene(QPointF(0,button.height())).y()
+                    self.assertLessEqual(bottom,window.height()-60,(theme,name,bottom))
+                    self.assertGreater(button.width(),70)
+        finally:
+            window.close(); engine.deleteLater()
+            QCoreApplication.sendPostedEvents(None,QEvent.Type.DeferredDelete)
+
+    def test_invalid_key_check_is_visible_in_main_status(self):
+        self.bridge.apiKey='invalid'
+        self.bridge.checkBalance()
+        self.assertIn('API key',self.bridge.status)
+        self.assertFalse(self.bridge.running)
