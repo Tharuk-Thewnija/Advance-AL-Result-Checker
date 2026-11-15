@@ -6,18 +6,22 @@
 AppId={{7184842F-7369-4368-B812-46C6E56C7215}
 AppName=A/L Results Collector (Install Test)
 DefaultDirName={localappdata}\Programs\ALResultsCollector-InstallTest
+PrivilegesRequired=lowest
 DefaultGroupName=A-L Results Collector Install Test
 OutputBaseFilename=ALResultsCollector-InstallTest-{#AppVersion}
 #else
 AppId={{FDC2638A-787B-4D1F-9945-E1D97B1B51F2}
 AppName=A/L Results Collector
-DefaultDirName={localappdata}\Programs\ALResultsCollector
+DefaultDirName={autopf}\ALResultsCollector
+PrivilegesRequired=admin
+; Do not silently reuse the previous per-user AppData installation directory.
+UsePreviousAppDir=no
 DefaultGroupName=A-L Results Collector
 OutputBaseFilename=ALResultsCollector-Setup-{#AppVersion}
 #endif
 AppVersion={#AppVersion}
 OutputDir=..\dist\installer
-PrivilegesRequired=lowest
+DisableDirPage=no
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 Compression=lzma2
@@ -40,4 +44,4 @@ Name: "{group}\A-L Results Collector"; Filename: "{app}\ALResultsCollector.exe"
 Name: "{group}\Uninstall A-L Results Collector"; Filename: "{uninstallexe}"
 
 [Run]
-Filename: "{app}\ALResultsCollector.exe"; Description: "Open A/L Results Collector"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\ALResultsCollector.exe"; Description: "Open A/L Results Collector"; Flags: nowait postinstall skipifsilent runasoriginaluser

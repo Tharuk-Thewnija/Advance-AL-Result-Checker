@@ -12,11 +12,21 @@ export a new Excel file. The main interface now uses Python and Qt Quick (PySide
   `ALResultsCollector/ALResultsCollector.exe`. Keep `_internal` beside the EXE.
 - Source: double-click `run.cmd` after the setup below.
 
-The installer runs for the current Windows user and adds a Start menu shortcut and
-uninstaller. Python is bundled. Chrome and an internet connection are needed for
+The installer defaults to `C:\Program Files\ALResultsCollector` and asks for
+administrator approval during installation. The destination page lets you choose
+another location. The application itself runs normally without administrator
+rights. Checkpoints/preferences remain per-user in AppData; exports go to the
+chosen output folder. A Start menu shortcut and uninstaller are included.
+Python is bundled. Chrome and an internet connection are needed for
 real collection. Selenium Manager obtains a compatible ChromeDriver when needed.
 Manual verification is the default and needs no NoneCAP account. Automatic mode
 uses your own NoneCAP API key and can spend provider credits.
+
+**Upgrading from an older AppData installation:** export any results you need,
+close the app and uninstall the older per-user installation first, then install
+this build. Uninstall preserves saved progress, preferences and exported files.
+Double-click setup normally and approve its Windows prompt; the app does not need
+to be configured to always run as administrator.
 
 ```powershell
 py -m venv .venv
