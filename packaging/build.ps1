@@ -14,7 +14,8 @@ try {
     if ($LASTEXITCODE) { throw 'PyInstaller build failed.' }
     Copy-Item -LiteralPath (Join-Path $projectRoot 'LICENSE') -Destination (Join-Path $projectRoot 'dist/ALResultsCollector/LICENSE.txt') -Force
     $appVersion = (& $pythonPath -c 'from al_results import __version__; print(__version__)').Trim()
-    Compress-Archive -LiteralPath (Join-Path $projectRoot 'dist/ALResultsCollector') -DestinationPath (Join-Path $projectRoot "dist/ALResultsCollector-$appVersion-portable.zip") -Force
+    & $pythonPath packaging/create_portable.py --folder (Join-Path $projectRoot 'dist/ALResultsCollector') --output (Join-Path $projectRoot "dist/ALResultsCollector-$appVersion-portable.zip")
+    if ($LASTEXITCODE) { throw 'Portable ZIP creation or verification failed.' }
     if (-not $SkipInstaller) {
         if (-not $Iscc) {
             $candidates = @(

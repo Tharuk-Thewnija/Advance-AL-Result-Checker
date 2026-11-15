@@ -32,6 +32,9 @@ def run(setup,output):
         installed=True
         exe=target/'ALResultsCollector.exe'
         assert exe.is_file()
+        licence=(Path(__file__).resolve().parents[1]/'LICENSE').read_bytes()
+        assert (target/'LICENSE.txt').read_bytes()==licence
+        assert (target/'_internal'/'LICENSE').read_bytes()==licence
         startup=output/'startup.json'
         execute([exe,'--smoke-test','--report',startup],45)
         data=json.loads(startup.read_text())
@@ -47,7 +50,7 @@ def run(setup,output):
     assert installed and not (target/'ALResultsCollector.exe').exists()
     assert marker.read_text(encoding='utf-8')=='Keep user data after uninstall.'
     result=dict(checks='passed',version=data['version'],installed_startup='passed',automatic='passed',
-                uninstall='passed',user_data_preserved=True,normal_installation_untouched=True)
+                uninstall='passed',user_data_preserved=True,normal_installation_untouched=True,mit_license=True)
     (output/'verification.json').write_text(json.dumps(result,indent=2)+'\n',encoding='utf-8')
     print(json.dumps(result,indent=2))
 

@@ -27,7 +27,9 @@ def verify(executable, output):
     assert not list(payload.rglob('*tkinter*'))
     assert not list(payload.rglob('icuuc.dll'))
     assert (payload / 'third_party_licenses/LGPL-3.0.txt').is_file()
-    assert (payload / 'LICENSE').read_text(encoding='utf-8').startswith('MIT License')
+    licence=(Path(__file__).resolve().parents[1]/'LICENSE').read_bytes()
+    assert (payload / 'LICENSE').read_bytes()==licence
+    assert (relocated / 'LICENSE.txt').read_bytes()==licence
     assert (payload / 'al_results/collector.py').is_file()
     assert (payload / 'al_results/nonecap/browser_hook.js').is_file()
     subprocess.run([str(manager), '--version'], env=env, cwd=working, check=True, timeout=20)
@@ -52,7 +54,8 @@ def verify(executable, output):
     assert automatic['checks']=='passed' and automatic['completed']==2 and automatic['same_job_receipt_rechecks']==1
     summary = dict(version=data['version'], startup='passed', graphics_api=data['graphics_api'],
                    relocated_exe=str(exe), browser='passed', browser_version=browser['browser_version'],
-                   mock='passed', counts=mock['counts'],automatic='passed',automatic_details=automatic)
+                   mock='passed', counts=mock['counts'],automatic='passed',automatic_details=automatic,
+                   mit_license='included in app folder and runtime payload')
     (output / 'verification.json').write_text(json.dumps(summary, indent=2) + '\n')
     print(json.dumps(summary, indent=2))
 
