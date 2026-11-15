@@ -216,6 +216,16 @@ changes may require updates. Report unrecognised labels with anonymized examples
 
 Keep browser/parsing/Excel/checkpoint code under `al_results/`, and Qt UI/controller
 code under `qt_app/`. Use synthetic fixtures and run the complete test suite.
-Do not commit student workbooks, results or application data. The project is intended
-to be open source; the maintainer still needs to choose a source licence before
-public release. No project licence has been chosen automatically.
+Do not commit student workbooks, results or application data.
+
+## License
+
+This project's original source code is licensed under the [MIT License](LICENSE).
+You may use, modify and redistribute it, including commercially, provided you
+retain the copyright and licence notice. See the licence for the complete terms
+and warranty disclaimer.
+
+Third-party components retain their own licences. In particular, MIT does not
+replace Qt/PySide6's licensing requirements. See
+[third-party notices](packaging/THIRD_PARTY_NOTICES.md) and the licence files
+included with the application.

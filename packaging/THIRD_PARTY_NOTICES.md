@@ -23,5 +23,7 @@ Upstream projects and source:
 - xlrd: https://github.com/python-excel/xlrd
 
 Python's licence is included by the bundler. Project-specific licences are collected
-from the installed distributions. These notices do not choose a licence for the
-application's own source code; that remains the maintainer's decision.
+from the installed distributions. The application's original source code is
+licensed under MIT; see `LICENSE.txt` in the application folder (also bundled as
+`_internal/LICENSE`). Third-party components retain their own licences, and the
+application's MIT licence does not replace their requirements.

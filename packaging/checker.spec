@@ -11,6 +11,7 @@ root = Path(SPECPATH).parent
 windows = Path(os.environ['SystemRoot'])
 os.environ['PATH'] = os.pathsep.join(map(str, [Path(sys.base_prefix), Path(sys.base_prefix) / 'DLLs', windows / 'System32', windows]))
 data = collect_data_files('selenium')
+data += [(str(root / 'LICENSE'), '.')]
 data += [(str(root / 'al_results' / 'data' / 'subjects.json'), 'al_results/data')]
 data += [(str(root / 'al_results' / 'collector.py'), 'al_results')]
 data += [(str(path), 'al_results/nonecap') for path in (root/'al_results'/'nonecap').glob('*.js')]

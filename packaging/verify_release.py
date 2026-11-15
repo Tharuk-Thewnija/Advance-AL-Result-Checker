@@ -27,6 +27,7 @@ def verify(executable, output):
     assert not list(payload.rglob('*tkinter*'))
     assert not list(payload.rglob('icuuc.dll'))
     assert (payload / 'third_party_licenses/LGPL-3.0.txt').is_file()
+    assert (payload / 'LICENSE').read_text(encoding='utf-8').startswith('MIT License')
     assert (payload / 'al_results/collector.py').is_file()
     assert (payload / 'al_results/nonecap/browser_hook.js').is_file()
     subprocess.run([str(manager), '--version'], env=env, cwd=working, check=True, timeout=20)

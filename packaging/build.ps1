@@ -12,6 +12,7 @@ try {
     if ($LASTEXITCODE) { throw 'Icon/version generation failed.' }
     & $pythonPath -m PyInstaller --noconfirm --clean packaging/checker.spec
     if ($LASTEXITCODE) { throw 'PyInstaller build failed.' }
+    Copy-Item -LiteralPath (Join-Path $projectRoot 'LICENSE') -Destination (Join-Path $projectRoot 'dist/ALResultsCollector/LICENSE.txt') -Force
     $appVersion = (& $pythonPath -c 'from al_results import __version__; print(__version__)').Trim()
     Compress-Archive -LiteralPath (Join-Path $projectRoot 'dist/ALResultsCollector') -DestinationPath (Join-Path $projectRoot "dist/ALResultsCollector-$appVersion-portable.zip") -Force
     if (-not $SkipInstaller) {
