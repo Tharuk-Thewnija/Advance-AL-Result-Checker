@@ -93,6 +93,19 @@ class BridgeTests(unittest.TestCase):
             window.close(); engine.deleteLater()
             QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
+    def test_solve_timeout_shows_pending_and_paid_resume_warning(self):
+        self.bridge._handle(WorkerEvent('stopped', {'reason':'automatic_timeout'}))
+        self.assertIn('pending', self.bridge.status)
+        self.assertIn('new paid solve', self.bridge.status)
+        self.assertFalse(self.bridge._collector.disabled)
+
+    def test_submission_timeout_shows_pending_without_manual_fallback(self):
+        self.bridge._handle(WorkerEvent('stopped', {'reason':'submission_timeout'}))
+        self.assertIn('pending', self.bridge.status)
+        self.assertIn('new paid solve', self.bridge.status)
+        self.assertNotIn('manually', self.bridge.status)
+        self.assertFalse(self.bridge._collector.disabled)
+
     def test_exhausted_credit_budget_prevents_launch_instead_of_manual_timeout(self):
         self.bridge.apiKey=KEY; self.bridge.captchaMode='Automatic'
         self.bridge.budget.reserve(); self.bridge.budget.settle('solve_previous',12)

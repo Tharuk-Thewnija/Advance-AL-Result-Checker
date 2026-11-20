@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from selenium.common.exceptions import TimeoutException, JavascriptException
 
 from al_results import collector as production
+from al_results.failure_report import record_failure
 from al_results.models import WorkerEvent
 from .budget import LimitReached, ChargeUnconfirmed
 from .client import ServiceError
@@ -34,6 +35,7 @@ def private_core():
         deadline = time.monotonic()+timeout
         while time.monotonic()<deadline:
             module.check_controls(stop,skip)
+            module.check_site_notice(driver)
             try:
                 for card in driver.find_elements(module.By.CSS_SELECTOR,'.card.border-info.watermark'):
                     if card.is_displayed() and card.text.strip(): return card.text
@@ -60,13 +62,27 @@ class AutomaticCollector:
         self.core_factory = None
 
     def pause_at_limit(self, reason, emit):
+        kind = 'billing_unconfirmed' if isinstance(reason,ChargeUnconfirmed) else 'automatic_limit'
+        self.pause_collection(str(reason),kind,emit)
+
+    def pause_collection(self, reason, kind, emit):
         with self.pause_lock:
-            kind = 'billing_unconfirmed' if isinstance(reason,ChargeUnconfirmed) else 'automatic_limit'
-            if not self.pause.is_set() or (kind=='billing_unconfirmed' and self.pause_kind!='billing_unconfirmed'):
-                self.pause_reason = str(reason)
+            priority = {'automatic_limit':1,'automatic_timeout':2,'submission_timeout':2,
+                        'service_connection':2,'billing_unconfirmed':3}
+            if not self.pause.is_set() or priority[kind]>priority.get(self.pause_kind,0):
+                self.pause_reason = reason
                 self.pause_kind = kind
                 self.pause.set()
-                emit(WorkerEvent('log',{'text':str(reason)+' Automatic collection paused. Pending rows are kept; no manual timeout is started.'}))
+                emit(WorkerEvent('log',{'text':reason+' Automatic collection paused. Pending rows are kept; no manual timeout is started.'}))
+
+    def pause_for_timeout(self, budget, emit):
+        # Solver has already attempted cancellation and receipt reconciliation.
+        # An unknown charge must keep its stronger billing block on Resume.
+        if budget.snapshot()['blocked']:
+            self.pause_at_limit(ChargeUnconfirmed('The solve timed out and its final charge could not be confirmed. Check NoneCAP history before further automatic requests.'),emit)
+        else:
+            self.pause_collection('NoneCAP did not return a token before the solve timeout. Cancellation was requested; no automatic retry was made.',
+                                  'automatic_timeout',emit)
 
     def fallback(self, emit, reason):
         # No raw browser, network, token or response text reaches the activity log.
@@ -123,6 +139,8 @@ class AutomaticCollector:
                         # Budget exhaustion takes precedence over an earlier service
                         # fallback, so later rows stay pending instead of timing out.
                         solver.budget.check()
+                        if owner.pause.is_set():
+                            raise core.StopRequested()
                         if owner.disabled:
                             captcha_ready()
                             return
@@ -165,9 +183,26 @@ class AutomaticCollector:
                         if exc.kind == 'stop': raise core.StopRequested()
                         raise core.SkipCurrentRow('Skipped from the GUI.')
                     except LimitReached as exc:
+                        if isinstance(exc, ChargeUnconfirmed):
+                            record_failure('billing', 'billing_unconfirmed')
                         owner.pause_at_limit(exc,emit)
                         raise core.StopRequested()
                     except (ServiceError, JavascriptException) as exc:
+                        if isinstance(exc, ServiceError):
+                            record_failure(exc.operation or 'verification', exc.code)
+                        else:
+                            record_failure('verification', 'browser_error')
+                        if isinstance(exc, ServiceError) and exc.code in ('network_error', 'invalid_response'):
+                            operation = exc.operation or 'request'
+                            message = f'NoneCAP {operation} failed to return a usable response.'
+                            if solver.budget.snapshot()['blocked']:
+                                owner.pause_at_limit(ChargeUnconfirmed(message + ' The final charge is unknown.'), emit)
+                            else:
+                                owner.pause_collection(message, 'service_connection', emit)
+                            raise core.StopRequested()
+                        if isinstance(exc,ServiceError) and exc.code=='solve_timeout':
+                            owner.pause_for_timeout(solver.budget,emit)
+                            raise core.StopRequested()
                         reason = str(exc) if isinstance(exc, ServiceError) else 'The form could not accept the token.'
                         owner.fallback(emit, reason)
                         captcha_ready()
@@ -179,9 +214,13 @@ class AutomaticCollector:
                     return text
                 except TimeoutException:
                     if not automatic: raise
-                    owner.fallback(emit, 'The site did not return results after automatic submission.')
-                    captcha_ready()
-                    return core.wait_for_results_or_skip(self.driver, config.captcha_timeout, stop_event, skip_event)
+                    record_failure('result wait', 'result_timeout', wait_limit_s=local.captcha_timeout)
+                    # A paid token was already received. The missing result is
+                    # an unknown submission outcome, not an absent student and
+                    # not permission to launch a chain of manual timeouts.
+                    owner.pause_collection('The site did not return results after automatic submission. The student remains pending; no resubmission or new paid solve was requested.',
+                                           'submission_timeout',emit)
+                    raise core.StopRequested()
 
         return Session
 

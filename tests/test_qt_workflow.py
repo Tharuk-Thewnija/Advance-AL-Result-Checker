@@ -114,6 +114,21 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(self.path.read_bytes(), before)
         self.assertTrue(self.bridge.canExport)  # Export again without recollecting.
 
+    def test_missing_checkpoint_stops_export_and_can_be_restored(self):
+        from al_results.checkpoints import checkpoint_path
+        self.start()
+        path = checkpoint_path()
+        backup = path.with_suffix('.backup')
+        self.assertTrue(path.resolve().is_relative_to(self.root.resolve()))
+        path.rename(backup)
+        self.bridge.exportResults(); self.pump()
+        self.assertIn('checkpoint', self.bridge.status.lower())
+        self.assertFalse(path.exists())
+        self.assertFalse(self.bridge.lastOutput)
+        backup.rename(path)
+        self.bridge.exportResults(); self.pump()
+        self.assertEqual(pd.read_excel(self.bridge.lastOutput)['Scrape Status'].tolist(), ['Completed'] * 2)
+
     def test_partial_export_resume_only_pending_rows(self):
         Browser.stop_after = 1
         self.start()
@@ -125,6 +140,21 @@ class WorkflowTests(unittest.TestCase):
         self.bridge.decide('resume'); self.pump()
         self.assertEqual(self.bridge.completed, 2)
         self.assertEqual(len(Browser.calls), 2)
+
+    def test_manual_retry_resumes_original_checkpoint_without_provider(self):
+        Browser.stop_after = 1
+        self.start()
+        self.assertTrue(self.bridge.canRetryPendingManually)
+        self.bridge.captchaMode = 'Automatic'
+        self.bridge.filePath = str(self.root / 'next-workbook.xlsx')
+        Browser.stop_after = None
+        with patch.object(self.bridge, 'client_factory', side_effect=AssertionError('Unexpected provider call')):
+            self.bridge.retryPendingManually()
+            self.pump()
+        self.assertEqual(self.bridge.captchaMode, 'Manual')
+        self.assertEqual(self.bridge.completed, 2)
+        self.assertEqual(Browser.calls, ['900000000V', '200000000001'])
+        self.assertFalse(self.bridge.canRetryPendingManually)
 
     def test_mismatch_cancel_preserves_saved_rows_and_restart_archives(self):
         self.start()

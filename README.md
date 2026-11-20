@@ -7,8 +7,15 @@ export a new Excel file. The main interface now uses Python and Qt Quick (PySide
 
 ## Run
 
-- Installer: `dist/installer/ALResultsCollector-Setup-0.4.0.exe`.
-- Portable: extract `dist/ALResultsCollector-0.4.0-portable.zip` and open
+Version 0.4.1 fixes result parsing for negative Z-scores and blank fields,
+waits for visible result text before completing a student, prevents exports
+from silently recreating a missing checkpoint, and improves import of sparse
+Excel workbooks. Automatic collection now pauses on connection or result
+timeouts with unfinished students pending. Failure reports identify the row,
+worker, operation, and observed error category.
+
+- Installer: `dist/installer/ALResultsCollector-Setup-0.4.1.exe`.
+- Portable: extract `dist/ALResultsCollector-0.4.1-portable.zip` and open
   `ALResultsCollector/ALResultsCollector.exe`. Keep `_internal` beside the EXE.
 - Source: double-click `run.cmd` after the setup below.
 
@@ -69,6 +76,16 @@ fields, Scrape Status and Scrape Notes. They are **value-only `.xlsx` files**: o
 sheets, formatting, formulas and macros are not preserved. The input is never edited.
 Completed means a result card was read; it does not mean the student passed or that
 every selected subject was present. Conflicting output column names are made unique.
+
+If a result card exists but a selected subject is absent, its grade cell is blank
+and Scrape Notes lists the missing subject code. The row remains Completed; no
+failing grade is invented. A visible site response saying "Sorry for the
+inconvenience" is recorded as Skipped with a site-response note, and the worker
+continues to the next student. This message does not establish why results are
+unavailable or whether the student sat the examination.
+The browser watches for this visible toast and retains only a boolean for that
+page, so a toast that disappears before the next poll can still be handled.
+Hidden message templates are ignored, and each new lookup resets the flag.
 
 ## Saved progress and the UI migration
 
@@ -148,12 +165,43 @@ dashboard and [NoneCAP's pricing](https://nonecap.com/pricing/) before large run
   and additional workbooks. Changing the worker count does not raise the limits.
   Closing resets the app's local counters, not the provider's balance or charges.
 
+If the app loses its connection to NoneCAP or receives an unreadable response,
+collection pauses across all workers. Completed rows stay saved, active workers
+can finish, and unfinished rows stay pending for Resume. The activity log names
+the failed operation. Resuming can use credits.
+
+When an automatic run encounters a request or
+result-wait failure, the activity log shows the path to its local diagnostic file.
+Look for `failure-*.jsonl` in
+`%LOCALAPPDATA%\ALResultsCollectorQt\ALResultsCollector\diagnostics\`.
+Each line records the first observed failure for one input row in that batch,
+with its UTC time, worker, operation, error category and, when available, HTTP
+status, request duration or wait limit. The row number is the one shown in the
+activity log. The report contains no NICs, names, API keys or response bodies.
+A socket timeout identifies the operation that expired. Provider-side logs may
+still be needed to explain why it expired.
+
 Unknown billing pauses automatic work and keeps the student pending. The app
 rechecks the same job once if its final charge is missing; this is a read-only
 receipt lookup, not a new paid solve. Raising the spending limit does not clear
 an unconfirmed charge. Check the provider history before restarting after an
 uncertain request. Stop/Skip/closing request cancellation of pending jobs, but a
 solve can finish before cancellation and still incur a charge.
+
+If NoneCAP does not return a token within the solve timeout (up to 120 seconds),
+the app requests cancellation and pauses collection. The current student and
+unstarted rows remain pending; active workers can finish. No automatic paid retry
+or manual-CAPTCHA timeout is started. After reviewing provider history, you can
+explicitly resume; a new solve can incur another charge, and the window's attempt
+and credit counters are retained. An unknown cancellation charge keeps the billing
+pause instead and cannot be cleared by increasing the session limits.
+
+A token can be issued successfully without the examination site returning a
+result. If the automatic submission wait expires, collection also pauses with
+the current row pending, rather than switching all workers to manual CAPTCHA.
+The token's reported charge is retained. An unknown submission outcome is never
+marked Skipped; only a recognized visible site notice or your Skip action does
+that. No resubmission or additional paid solve occurs automatically.
 
 The masked key stays in memory and is not saved by the app or put in logs,
 checkpoints, command-line arguments or exports. The app sends NoneCAP the public

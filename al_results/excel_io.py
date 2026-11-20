@@ -14,6 +14,19 @@ from .parsing import normalize_nic, is_valid_nic
 from .subjects import load_subjects
 
 
+def _used_rows(source):
+    """Keep internal gaps, without materializing trailing formatting-only rows."""
+    rows = []
+    for position, row in enumerate(source):
+        width = len(row)
+        while width and row[width - 1] in (None, ''):
+            width -= 1
+        if width:
+            rows.extend([()] * (position - len(rows)))
+            rows.append(tuple(row[:width]))
+    return rows
+
+
 def load_workbook(path: Path) -> InputWorkbook:
     path = Path(path).resolve()
     if path.suffix.lower() not in ('.xlsx', '.xls'):
@@ -24,7 +37,10 @@ def load_workbook(path: Path) -> InputWorkbook:
         try:
             worksheet = book.worksheets[0]
             sheet = worksheet.title
-            rows = list(worksheet.iter_rows(values_only=True))
+            # Read the actual row widths. The declared range can include a
+            # single formatted cell thousands of rows beyond the data.
+            worksheet.reset_dimensions()
+            rows = _used_rows(worksheet.iter_rows(values_only=True))
         finally:
             book.close()
     else:
@@ -43,20 +59,19 @@ def load_workbook(path: Path) -> InputWorkbook:
                     return bool(cell.value)
                 return cell.value
 
-            rows = [tuple(value(cell) for cell in worksheet.row(i)) for i in range(worksheet.nrows)]
+            rows = _used_rows(tuple(value(cell) for cell in worksheet.row(i)) for i in range(worksheet.nrows))
         finally:
             book.release_resources()
     # Native readers retain Excel errors and duplicate/blank header labels.
     # Ignore trailing rows/columns containing only formatting, not values.
-    while rows and all(value is None or value == '' for value in rows[-1]):
-        rows.pop()
     if not rows:
         raise ValueError('The first worksheet contains no students.')
-    width = max((i + 1 for row in rows for i, value in enumerate(row) if value is not None and value != ''), default=0)
-    headers = list(rows[0][:width])
+    width = max(map(len, rows))
+    headers = rows[0] + (None,) * (width - len(rows[0]))
     if headers.count('NIC') != 1:
         raise ValueError("The first worksheet must contain exactly one column named 'NIC'.")
-    frame = pd.DataFrame([row[:width] for row in rows[1:]], columns=pd.Index(headers, dtype=object), dtype=object)
+    data_rows = (row + (None,) * (width - len(row)) for row in rows[1:])
+    frame = pd.DataFrame(data_rows, columns=pd.Index(headers, dtype=object), dtype=object)
     if frame.empty:
         raise ValueError('The first worksheet contains no students.')
     return InputWorkbook(path, hashlib.sha256(data).hexdigest(), sheet, frame)

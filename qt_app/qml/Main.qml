@@ -331,6 +331,7 @@ ApplicationWindow {
                                 ActionButton { objectName: "exportResults"; theme: t; tone: "success"; text: "Export to Excel"; Layout.fillWidth: true; enabled: bridge.canExport; onClicked: bridge.exportResults() }
                                 ActionButton { objectName: "openOutputFolder"; theme: t; tone: "info"; text: "Open folder"; Layout.fillWidth: true; enabled: bridge.lastOutput.length > 0; onClicked: bridge.openFolder() }
                             }
+                            ActionButton { objectName: "retryPendingManually"; theme: t; text: "Retry pending rows manually (" + (bridge.total - bridge.processed) + ")"; visible: bridge.canRetryPendingManually; Layout.fillWidth: true; onClicked: bridge.retryPendingManually() }
                             Hint { text: "Stop saves progress here. Export creates your Excel file."; Layout.fillWidth: true; font.pixelSize: 11 }
                         }
                     }

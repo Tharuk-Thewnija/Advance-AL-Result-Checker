@@ -38,6 +38,23 @@ class CheckpointStore:
         self.closed = False
 
     @classmethod
+    def open_for_export(cls, workbook: InputWorkbook, config: RunConfig) -> 'CheckpointStore':
+        path = checkpoint_path()
+        try:
+            connection = sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True)
+        except sqlite3.OperationalError as exc:
+            raise OSError('Cannot open the saved checkpoint for export. Restore it or check file access.') from exc
+        try:
+            row = connection.execute('SELECT value FROM metadata WHERE id=1').fetchone()
+            metadata = json.loads(row[0]) if row else None
+            if metadata != identity(workbook, config):
+                raise CheckpointMismatch('The saved checkpoint does not match this collection.')
+            return cls(path, connection, metadata)
+        except Exception:
+            connection.close()
+            raise
+
+    @classmethod
     def open(cls, workbook: InputWorkbook, config: RunConfig) -> 'CheckpointStore':
         path = checkpoint_path()
         path.parent.mkdir(parents=True, exist_ok=True)

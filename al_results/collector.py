@@ -11,9 +11,60 @@ from selenium.webdriver.support.ui import WebDriverWait
 from .parsing import normalize_spaces
 
 RESULTS_PAGE_URL = "https://www.doenets.lk/examresults"
+SITE_NOTICE_TEXT = 'sorry for the inconvenience, please try again'
+SITE_NOTICE_SCRIPT = r"""
+(() => {
+    window.__alSiteNoticeSeen = false;
+    const visible = node => {
+        if (!node.getClientRects().length) return false;
+        for (let element=node; element; element=element.parentElement) {
+            const style=getComputedStyle(element);
+            if (style.display==='none' || style.visibility==='hidden' || Number(style.opacity)===0) return false;
+        }
+        return true;
+    };
+    const inspect = () => {
+        if (window.__alSiteNoticeSeen) return;
+        for (const node of document.querySelectorAll('.toast-message,[role="alertdialog"],[role="alert"],.alert')) {
+            const text=(node.innerText || '').replace(/\s+/g,' ').trim().toLowerCase();
+            if (text.includes('sorry for the inconvenience, please try again') && visible(node)) {
+                window.__alSiteNoticeSeen = true;
+                return;
+            }
+        }
+    };
+    new MutationObserver(inspect).observe(document, {subtree:true,childList:true,characterData:true,attributes:true});
+    inspect();
+})();
+"""
 
 class SkipCurrentRow(Exception):
     pass
+
+class SiteNoResults(SkipCurrentRow):
+    """The site returned its unavailable-result notice for this lookup."""
+
+
+def check_site_notice(driver):
+    execute = getattr(driver, 'execute_script', None)
+    if execute is not None and execute('return window.__alSiteNoticeSeen === true;') is True:
+        raise SiteNoResults("Site returned 'Sorry for the inconvenience'; no results collected.")
+    # Select the deepest matching node, including messages split across spans.
+    # Check displayed text too: hidden templates must never skip a student.
+    phrase = SITE_NOTICE_TEXT
+    match = f"contains(translate(normalize-space(.), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), '{phrase}')"
+    selector = f'//*[not(self::script or self::style) and {match} and not(.//*[{match}])]'
+    # Direct toast lookup also handles Unicode whitespace that XPath 1.0's
+    # normalize-space does not normalize (for example a nonbreaking space).
+    elements = driver.find_elements(By.CSS_SELECTOR, '.toast-message,[role="alertdialog"],[role="alert"],.alert')
+    elements += driver.find_elements(By.XPATH, selector)
+    for element in elements:
+        try:
+            if element.is_displayed() and phrase in normalize_spaces(element.text).casefold():
+                raise SiteNoResults("Site returned 'Sorry for the inconvenience'; no results collected.")
+        except StaleElementReferenceException:
+            continue
+
 
 class StopRequested(Exception):
     pass
@@ -96,7 +147,6 @@ def wait_for_results_or_skip(
     skip_event: threading.Event,
 ) -> str:
     deadline = time.perf_counter() + timeout_seconds
-    wait = WebDriverWait(driver, 1)
 
     while time.perf_counter() < deadline:
         if stop_event.is_set():
@@ -106,15 +156,16 @@ def wait_for_results_or_skip(
             skip_event.clear()
             raise SkipCurrentRow("Skipped from the GUI while waiting for captcha/submit.")
 
+        check_site_notice(driver)
         try:
-            result_card = wait.until(
-                EC.presence_of_element_located(
-                    (By.CSS_SELECTOR, ".card.border-info.watermark")
-                )
-            )
-            return result_card.text
-        except TimeoutException:
-            continue
+            for card in driver.find_elements(By.CSS_SELECTOR, ".card.border-info.watermark"):
+                if card.is_displayed():
+                    text = card.text
+                    if text.strip():
+                        return text
+        except StaleElementReferenceException:
+            pass  # The page replaced the card while its contents were loading.
+        stop_event.wait(min(.2, max(0, deadline - time.perf_counter())))
 
     raise TimeoutException(
         f"No results card was detected within {timeout_seconds} seconds."
@@ -124,6 +175,11 @@ def wait_for_results_or_skip(
 class BrowserSession:
     def __init__(self):
         self.driver = create_driver()
+        try:
+            self.driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {'source':SITE_NOTICE_SCRIPT})
+        except WebDriverException:
+            self.driver.quit()
+            raise
 
     def fetch(self, nic, config, stop_event, skip_event, captcha_ready):
         try:

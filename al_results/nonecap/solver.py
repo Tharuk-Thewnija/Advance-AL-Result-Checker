@@ -1,6 +1,7 @@
 """One paid job at a time; uncertain billing disables further automatic calls."""
 import re
 import time
+from al_results.failure_report import record_failure
 
 from .budget import LimitReached, ChargeUnconfirmed
 from .client import ServiceError
@@ -82,12 +83,15 @@ class Solver:
             if not isinstance(job, str) or not re.fullmatch(r'solve_[A-Za-z0-9_-]{1,96}', job):
                 job = None
                 self.budget.uncertain()
-                raise ServiceError('invalid_response', uncertain=True)
+                raise ServiceError('invalid_response', uncertain=True, operation='solve creation')
             deadline = time.monotonic() + timeout
+            operation = 'solve creation'
             while True:
                 self.controls(stop, skip)
                 if reply.get('status') in ('solved', 'failed', 'expired', 'cancelled'):
                     terminal = True
+                    if reply['status'] != 'solved':
+                        record_failure(operation, reply['status'])
                     reply = self.receipt(job, reply)
                     token = reply.get('token')
                     if reply['status'] != 'solved' or not isinstance(token, str) or not 0 < len(token) <= 65536:
@@ -97,13 +101,17 @@ class Solver:
                                           if isinstance(reply.get(name), str)}
                     return token
                 if reply.get('status') not in ('pending', 'solving'):
-                    raise ServiceError('invalid_response')
+                    raise ServiceError('invalid_response', operation=operation)
                 if time.monotonic() >= deadline:
                     raise ServiceError('solve_timeout')
                 stop.wait(min(.5, max(0, deadline - time.monotonic())))
                 self.controls(stop, skip)
+                operation = 'solve status check'
                 reply = self.client.get(job)
         except (Interrupted, ServiceError, LimitReached) as exc:
+            if isinstance(exc, ServiceError):
+                record_failure(exc.operation or 'verification', exc.code,
+                               wait_limit_s=timeout if exc.code == 'solve_timeout' else None)
             if job and not terminal:
                 self.cancel(job)
             elif isinstance(exc, ServiceError) and exc.uncertain:

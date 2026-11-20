@@ -29,7 +29,7 @@ def collect_parallel(config, workbook, store, emit, stop, skips, session_factory
                 try: position, nic, invalid = jobs.get_nowait()
                 except Empty: break
                 skips[number-1].clear()
-                emit(WorkerEvent('current', {'position':position,'nic':nic}))
+                emit(WorkerEvent('current', {'position':position,'nic':nic,'worker':number}))
                 emit(WorkerEvent('log', {'text':f'Worker {number}: opening row {position + 1}.'}))
                 row_started = time.perf_counter()
                 if invalid:
@@ -43,8 +43,9 @@ def collect_parallel(config, workbook, store, emit, stop, skips, session_factory
                         missing = [sid for sid in config.subject_ids if values.get(f'subject:{sid}') is None]
                         result = RowResult(position,'Completed',values,
                                            'Selected subject result not present: '+', '.join(missing) if missing else '')
-                    except core.SkipCurrentRow:
-                        result = RowResult(position,'Skipped',{},f'Skipped on worker {number}')
+                    except core.SkipCurrentRow as exc:
+                        note = str(exc) if isinstance(exc, core.SiteNoResults) else f'Skipped on worker {number}'
+                        result = RowResult(position,'Skipped',{},note)
                     except core.StopRequested:
                         if not pause.is_set(): stop.set()
                         break
@@ -95,7 +96,8 @@ def collect_parallel(config, workbook, store, emit, stop, skips, session_factory
                     counts['processed'] += 1; counts[keys[result.status]] += 1
                     row_seconds.append(elapsed)
                     emit(WorkerEvent('progress',dict(counts)))
-                    emit(WorkerEvent('log',{'text':f'Worker {number}, row {result.position+1}: {result.status} ({elapsed:.1f}s)'}))
+                    detail = f' — {result.note}' if result.status=='Skipped' and result.note else ''
+                    emit(WorkerEvent('log',{'text':f'Worker {number}, row {result.position+1}: {result.status} ({elapsed:.1f}s){detail}'}))
             for future in futures: future.result()
         if terminal != 'fatal' and not reason:
             if pause.is_set(): terminal,reason,error = 'stopped',pause_kind() if pause_kind else 'automatic_limit',pause_reason()

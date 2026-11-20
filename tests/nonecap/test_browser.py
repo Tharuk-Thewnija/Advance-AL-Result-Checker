@@ -45,6 +45,79 @@ class LocalClient:
 
 
 class BrowserTests(unittest.TestCase):
+    def test_site_notice_skips_and_missing_ict_stays_blank_with_one_and_two_workers(self, transient=False):
+        page = HTML + '''<script>
+        document.querySelector('button').onclick = function() {
+            const nic = document.querySelector('input').value;
+            if (nic.endsWith('1')) {
+                document.body.insertAdjacentHTML('beforeend', '<div toast-component="" class="toast-error toast ng-trigger ng-trigger-flyInOut" style="display: inherit; opacity: 1;"><button aria-label="Close" class="toast-close-button ng-tns-c14-2 ng-star-inserted"><span class="ng-tns-c14-2" aria-hidden="true">×</span></button><div aria-live="polite" role="alertdialog" class="toast-message ng-star-inserted" aria-label=" Sorry for the inconvenience, Please try again">  Sorry for the inconvenience, Please try again </div><div class="ng-tns-c14-2 ng-star-inserted"><div class="toast-progress" style="width: 0%;"></div></div></div>');
+            } else {
+                const card = document.getElementById('result');
+                if (nic.endsWith('2')) card.textContent = 'Name\\nSAMPLE STUDENT\\nSubject Stream\\nCOMMERCE\\nBUSINESS STUDIES\\nA';
+                card.style.display = 'block';
+            }
+        };
+        </script>'''
+        if transient:
+            # Angular toasts can disappear before the first WebDriver poll.
+            page = page.replace('Sorry for the inconvenience,', 'Sorry&nbsp;for the inconvenience,')
+            page = page.replace('} else {', "setTimeout(()=>document.querySelector('.toast-error').remove(), 50); } else {")
+        for workers in (1, 2):
+            with self.subTest(workers=workers), tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {'LOCALAPPDATA': directory}):
+                root = Path(directory)
+                path = root/'fictional.xlsx'
+                pd.DataFrame({'NIC':['200000000001','200000000002','200000000003']}).to_excel(path, index=False)
+                book = load_workbook(path)
+                config = RunConfig(path, ('20',), ('Candidate Name',), '2025', 3, root/'out')
+                core = private_core()
+                if transient:
+                    ordinary_wait = core.wait_for_results_or_skip
+                    def late_poll(driver, timeout, stop, skip):
+                        stop.wait(.3)
+                        return ordinary_wait(driver, timeout, stop, skip)
+                    core.wait_for_results_or_skip = late_poll
+                core.RESULTS_PAGE_URL = 'data:text/html;charset=utf-8,'+quote(page)
+                core.create_driver = lambda: production.create_driver(headless=True)
+                adapter = PrototypeCollector(lambda data: None)
+                adapter.workers = workers
+                adapter.core_factory = lambda: core
+                client = LocalClient()
+                adapter.solver = Solver(client, Budget(100, 10), lambda data: None)
+                events = []
+                adapter(config, book, CheckpointStore.open(book, config), events.append, threading.Event(), threading.Event())
+                self.assertEqual(events[-1].kind, 'finished', events[-1])
+                self.assertFalse(adapter.disabled)
+                self.assertEqual(client.creates, 3)
+                store = CheckpointStore.open(book, config)
+                try:
+                    rows = store.results()
+                    self.assertEqual([r.status for r in rows], ['Skipped','Completed','Completed'])
+                    self.assertIn('Site returned', rows[0].note)
+                    self.assertIsNone(rows[1].values['subject:20'])
+                    self.assertEqual(rows[1].note, 'Selected subject result not present: 20')
+                    self.assertEqual(rows[2].values['subject:20'], 'A')
+                    output = export_results(book, config, rows)
+                finally:
+                    store.close()
+                exported = pd.read_excel(output)
+                grades = exported['Information & Communication Technology Result']
+                self.assertTrue(pd.isna(grades[0]) and pd.isna(grades[1]))
+                self.assertEqual(grades[2], 'A')
+
+    def test_transient_site_toast_with_nonbreaking_spaces_is_not_lost(self):
+        self.test_site_notice_skips_and_missing_ict_stays_blank_with_one_and_two_workers(transient=True)
+
+    def test_notice_observer_does_not_latch_hidden_template(self):
+        driver = production.create_driver(headless=True)
+        try:
+            driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {'source':production.SITE_NOTICE_SCRIPT})
+            page = '<div class="toast-message" style="display:none">Sorry for the inconvenience, Please try again</div><div class="card border-info watermark">Valid result</div>'
+            driver.get('data:text/html;charset=utf-8,'+quote(page))
+            self.assertEqual(private_core().wait_for_results_or_skip(driver, 1, threading.Event(), threading.Event()), 'Valid result')
+            self.assertIs(driver.execute_script('return window.__alSiteNoticeSeen;'), False)
+        finally:
+            driver.quit()
+
     def run_local(self, *, failure=False, workers=1):
         original_session = production.BrowserSession
         with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {'LOCALAPPDATA': directory}):

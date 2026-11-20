@@ -1,5 +1,6 @@
 """GUI-thread controller. All workbook, browser and SQLite work runs in Tasks."""
 from collections import deque
+from contextlib import nullcontext
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
@@ -13,6 +14,7 @@ from PySide6.QtWidgets import QFileDialog
 from al_results.checkpoints import CheckpointMismatch, CheckpointStore, checkpoint_path
 from al_results.collector import collect
 from al_results.events import EventBuffer
+from al_results.failure_report import capture_failures
 from al_results.excel_io import load_workbook, validate_rows, export_results
 from al_results.models import RunConfig, WorkerEvent
 from al_results.settings import load_preferences, save_preferences, validate_config
@@ -97,6 +99,9 @@ class Bridge(QObject):
     status = Property(str, lambda self: self._status, notify=stateChanged)
     currentStudent = Property(str, lambda self: self._current, notify=stateChanged)
     canExport = Property(bool, lambda self: self._has_results and not self.running, notify=stateChanged)
+    canRetryPendingManually = Property(bool, lambda self: not self.running and not self._mock
+                                       and self._book is not None and self.total > self.processed,
+                                       notify=stateChanged)
     lastOutput = Property(str, lambda self: self._last_output, notify=stateChanged)
     needsDecision = Property(bool, lambda self: self._prepared is not None, notify=stateChanged)
     decisionMismatch = Property(bool, lambda self: bool(self._prepared and self._prepared['mismatch']), notify=stateChanged)
@@ -309,6 +314,15 @@ class Bridge(QObject):
                 self._status += ' ' + p['error']
             if p.get('reason') == 'automatic_limit':
                 self._status = 'Automatic collection paused at the session limit. Pending rows are kept. Adjust limits or select Manual before starting again.'
+            elif p.get('reason') == 'service_connection':
+                self._status = p['error'] + ' Unfinished students are pending. Resume when the connection is available.'
+                self._auto_status = self._status; self.captchaChanged.emit()
+            elif p.get('reason') == 'automatic_timeout':
+                self._status = 'NoneCAP solve timed out. Unfinished students remain pending. Check NoneCAP history before resuming; Resume can request a new paid solve.'
+                self._auto_status = self._status; self.captchaChanged.emit()
+            elif p.get('reason') == 'submission_timeout':
+                self._status = 'The site did not return results after submission. Unfinished students remain pending. No automatic retry was made; Resume can request a new paid solve.'
+                self._auto_status = self._status; self.captchaChanged.emit()
             elif p.get('reason') == 'billing_unconfirmed':
                 self._status = 'Automatic collection paused because a final charge cannot be confirmed. Pending rows are kept. Check NoneCAP history or select Manual; raising limits will not clear this billing pause.'
                 self._auto_status = self._status; self.captchaChanged.emit()
@@ -341,14 +355,31 @@ class Bridge(QObject):
         self._stage = 'collect'
         invalid_label = 'intentionally invalid mock rows' if self._mock else 'invalid NICs'
         self.log(f"Loaded {self.total} rows. {p['invalid']} {invalid_label} will be marked skipped.")
+        self._run_saved_collection(restart=choice == 'restart')
+
+    @Slot()
+    def retryPendingManually(self):
+        if self._closing or not self.canRetryPendingManually:
+            return
+        self.captchaMode = 'Manual'
+        self.stop_event.clear()
+        self.skip_event.clear()
+        self._stage = 'collect'
+        self.log(f'Resuming pending students from {self._book.path.name} with manual verification.')
+        self._run_saved_collection(restart=False)
+
+    def _run_saved_collection(self, *, restart):
         book, config = self._book, self._config
 
         def run():
-            if choice == 'restart' and checkpoint_path().exists():
+            if restart and checkpoint_path().exists():
                 path = checkpoint_path()
                 path.rename(path.with_name(f'archived-{datetime.now():%Y%m%d-%H%M%S}-{uuid4().hex[:8]}.sqlite3'))
             store = CheckpointStore.open(book, config)
-            self._collector(config, book, store, self.events.put, self.stop_event, self.skip_event)
+            recording = (capture_failures(self.events.put) if self._mode == 'Automatic' and not self._mock
+                         else nullcontext(self.events.put))
+            with recording as emit:
+                self._collector(config, book, store, emit, self.stop_event, self.skip_event)
         self._launch('collecting', 'Running the offline mock test…' if self._mock else 'Opening the results website…', run)
 
     @Slot()
@@ -374,7 +405,7 @@ class Bridge(QObject):
         config = replace(original, output_dir=Path(self._folder.strip()).resolve()) if self._folder.strip() else original
 
         def export():
-            store = CheckpointStore.open(book, original)
+            store = CheckpointStore.open_for_export(book, original)
             try:
                 results = store.results(); pending = bool(store.pending_positions())
                 output = export_results(book, config, results)

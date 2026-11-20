@@ -9,6 +9,42 @@ from al_results.models import RunConfig, RowResult
 
 
 class ExcelTests(unittest.TestCase):
+    def test_ragged_streaming_sheet_preserves_all_columns_and_rows(self):
+        from openpyxl import Workbook
+        workbook = Workbook(write_only=True)
+        sheet = workbook.create_sheet()
+        sheet.append(['NIC'])
+        sheet.append(['900000000V', 'extra'])
+        sheet.append([])
+        sheet.append(['900000001V'])
+        workbook.save(self.path)
+        workbook.close()
+        frame = load_workbook(self.path).frame
+        self.assertEqual(list(frame.columns), ['NIC', None])
+        self.assertEqual(frame.values.tolist(), [['900000000V', 'extra'], [None, None], ['900000001V', None]])
+
+    def test_formatting_does_not_expand_the_input_rectangle(self):
+        from openpyxl import Workbook
+        from openpyxl.worksheet._read_only import ReadOnlyWorksheet
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.append(['NIC', 'Unused'])
+        sheet.append(['900000000V'])
+        sheet.cell(10000, 256).number_format = '0.00'
+        workbook.save(self.path)
+        workbook.close()
+        emitted_cells = 0
+        original = ReadOnlyWorksheet.iter_rows
+        def observed(*args, **kwargs):
+            nonlocal emitted_cells
+            for row in original(*args, **kwargs):
+                emitted_cells += len(row)
+                yield row
+        with patch.object(ReadOnlyWorksheet, 'iter_rows', observed):
+            frame = load_workbook(self.path).frame
+        self.assertEqual(frame.shape, (1, 2))
+        self.assertLess(emitted_cells, 1000)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
